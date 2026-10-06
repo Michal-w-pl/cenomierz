@@ -7,6 +7,9 @@
 <meta name="description" content="Śledzenie cen obserwowanych ogłoszeń z Otomoto, porównywarka i zasięg WLTP aut elektrycznych.">
 <meta name="theme-color" content="#2a78d6">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Cenomierz">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1548,6 +1551,7 @@ sb.auth.onAuthStateChange((_ev, s) => showApp(s));
 let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => (view.tab === 'compare' ? renderCompare() : renderGrid()), 150); });
 setInterval(() => { if (!state.checking && !state.importing) refresh(); }, 5 * 60_000);
 captureImportHash();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 sb.auth.getSession().then(({ data }) => { if (!data.session) showApp(null); });
 </script>
 </body>
