@@ -1,0 +1,16 @@
+{
+  "name": "otomoto-tracker",
+  "version": "1.0.0",
+  "description": "Śledzenie zmian cen obserwowanych ogłoszeń z Otomoto",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node cli.js check",
+    "add": "node cli.js add",
+    "list": "node cli.js list"
+  }
+}
