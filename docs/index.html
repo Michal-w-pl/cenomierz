@@ -358,6 +358,13 @@
   .mkt-list tr.self td { font-weight: 700; background: var(--accent-soft); }
   @media (max-width: 640px) { .mkt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .mkt-grid .stat:nth-child(3) { border-left: 0; } .mkt-grid .stat:nth-child(n+3) { border-top: 1px solid var(--border); } }
 
+  /* ---------- negocjacje ---------- */
+  .nego { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; align-items: start; }
+  .nego ul { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13.5px; line-height: 1.55; }
+  .nego .offer { grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 10px; font-size: 13.5px; color: var(--text-2); }
+  .nego .offer b { color: var(--text); font-size: 16px; }
+  @media (max-width: 640px) { .nego { grid-template-columns: 1fr; } }
+
   /* ---------- wyszukiwania ---------- */
   .search-add { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 8px; }
   .search-add input { height: 40px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); outline: none; min-width: 0; }
@@ -550,6 +557,7 @@
       <option value="wltp-desc">Zasięg WLTP: od największego</option>
       <option value="batt-desc">Bateria: od największej</option>
       <option value="market">Najtańsze względem rynku</option>
+      <option value="listed">Najdłużej na Otomoto</option>
       <option value="added">Ostatnio dodane</option>
     </select>
   </div>
@@ -842,7 +850,7 @@ function card(e) {
     ${mktRow(e)}
     <div class="chart-host" data-chart="${esc(e.key)}"></div>
     <div class="card-foot">
-      <span>${s.changes ? `<b class="num">${s.changes}</b> ${plural(s.changes, 'zmiana', 'zmiany', 'zmian')} ceny` : 'Cena stała'}${e.lastError ? ` <span class="warn-ico" title="${esc(e.lastError)}">${icon('alert')}</span>` : ''}</span>
+      <span>${s.changes ? `<b class="num">${s.changes}</b> ${plural(s.changes, 'zmiana', 'zmiany', 'zmian')} ceny` : 'Cena stała'}${daysListed(e) != null ? ` · <b class="num">${daysListed(e)}</b> ${plural(daysListed(e), 'dzień', 'dni', 'dni')} na Otomoto` : ''}${e.lastError ? ` <span class="warn-ico" title="${esc(e.lastError)}">${icon('alert')}</span>` : ''}</span>
       <span>sprawdzono ${ago(e.lastChecked)}</span>
     </div>
   </article>`;
@@ -865,6 +873,7 @@ function filtered() {
     'wltp-desc': (a, b) => descNullsLast(wltpInfo(a).value, wltpInfo(b).value),
     'batt-desc': (a, b) => descNullsLast(battOf(a), battOf(b)),
     market: (a, b) => ascNullsLast(mkt(a)?.pct, mkt(b)?.pct),
+    listed: (a, b) => descNullsLast(daysListed(a), daysListed(b)),
   }[view.sort];
   return items.sort((a, b) => (a.status === 'REMOVED') - (b.status === 'REMOVED') || by(a, b));
 }
@@ -1544,6 +1553,7 @@ function openDetail(key) {
       ${stat('Najniższa', money(s.min, e.currency))}${stat('Najwyższa', money(s.max, e.currency))}
       ${stat('Obserwowane od', dateS(e.addedAt))}
     </div>
+    ${negoSection(e, s)}
     ${targetSection(e, s)}
     ${isEV(e) ? evSection(e) : ''}
     ${mktSection(e)}
@@ -1569,6 +1579,61 @@ $('#dlg').addEventListener('click', async (ev) => {
   removeKeys([del.dataset.del]);
 });
 $('#dlg').addEventListener('close', () => { $('#tip').classList.remove('show'); document.body.append($('#tip')); });
+
+// ---------- negocjacje ----------
+// Orientacyjna pozycja negocjacyjna z trzech sygnałów: jak długo ogłoszenie wisi (pierwotna data wystawienia
+// z Otomoto), czy sprzedawca już obniżał cenę (nasza historia + informacja Otomoto o obniżce) i jak cena wypada
+// na tle rynku. To podpowiedź, nie wycena.
+const daysListed = (e) => {
+  const t = Date.parse(e.specs?.listedAt ?? '');
+  return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 864e5)) : null;
+};
+function negotiation(e, s) {
+  if (s.removed || s.last == null) return null;
+  const days = daysListed(e), r = mkt(e), pd = e.specs?.priceDrop;
+  const drops = e.history.filter((p, i) => i && p.price < e.history[i - 1].price).length;
+  // najwyższa znana cena: początek naszej historii albo cena sprzed obniżki wg Otomoto
+  const peak = Math.max(s.first ?? s.last, pd?.lowest && pd.lowest > s.last ? pd.lowest : 0);
+  const totalDrop = peak > s.last ? (peak - s.last) / peak * 100 : 0;
+  let score = 0;
+  const why = [];
+  if (days != null) {
+    const since = new Date(e.specs.listedAt).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' });
+    if (days >= 120) { score += 3; why.push(`Wisi bardzo długo — ${days} dni (od ${since}). Sprzedawcy zależy na zamknięciu sprawy.`); }
+    else if (days >= 60) { score += 2; why.push(`Wisi długo — ${days} dni (od ${since}). Sprzedawcy zależy na zamknięciu sprawy.`); }
+    else if (days >= 30) { score += 1; why.push(`Wisi ${days} dni (od ${since}).`); }
+    else if (days < 14) { score -= 1; why.push(`Świeże ogłoszenie — ${days} ${plural(days, 'dzień', 'dni', 'dni')}. Sprzedawca może jeszcze czekać na lepszą ofertę.`); }
+    else why.push(`Wisi ${days} dni.`);
+  }
+  if (drops >= 2 || totalDrop >= 5) {
+    score += 1;
+    why.push(`Cena już spadała${drops ? ` (${drops} ${plural(drops, 'obniżka', 'obniżki', 'obniżek')})` : ''}${totalDrop >= 1 ? ` — łącznie o ${pctS(-totalDrop).replace('−', '')} z ${money(peak, e.currency)}` : ''}. Sprzedawca jest elastyczny.`);
+  } else if (drops === 1 || totalDrop > 0) {
+    why.push(`Jedna obniżka${totalDrop >= 1 ? ` (o ${pctS(-totalDrop).replace('−', '')})` : ''}.`);
+  }
+  if (r) {
+    if (r.pct >= 5) { score += 2; why.push(`Cena ${pctS(r.pct)} powyżej rynku (${money(r.ref, e.currency)} dla podobnych) — mocny argument.`); }
+    else if (r.pct >= 3) { score += 1; why.push(`Cena nieco powyżej rynku (${pctS(r.pct)}).`); }
+    else if (r.pct <= -5) { score -= 2; why.push(`Cena już ${pctS(r.pct).replace('−', '')} poniżej rynku — mało miejsca na dalsze zejście.`); }
+    else if (r.pct <= -3) { score -= 1; why.push(`Cena nieco poniżej rynku (${pctS(r.pct)}).`); }
+    else why.push('Cena zbliżona do rynkowej.');
+  }
+  if (!why.length) return null;
+  const level = score >= 3 ? ['Mocna', 'good', 0.08] : score >= 1 ? ['Umiarkowana', 'neutral', 0.05] : ['Niewielka', 'warn', 0.02];
+  let offer = s.last * (1 - level[2]);
+  if (r && r.ref < s.last) offer = Math.min(offer, Math.max(r.ref, s.last * 0.85));
+  offer = Math.round(offer / 500) * 500;
+  return { level: level[0], tone: level[1], why, offer, offPct: (s.last - offer) / s.last * 100 };
+}
+function negoSection(e, s) {
+  const n = negotiation(e, s);
+  if (!n) return '';
+  return `<div class="dlg-section"><h3>Negocjacje</h3><div class="nego">
+    <span class="pill ${n.tone}">Pozycja: ${n.level}</span>
+    <ul>${n.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
+    <div class="offer">Na start rozmowy: <b class="num">${money(n.offer, e.currency)}</b> <span class="note" style="display:inline">(${pctS(-n.offPct)} od obecnej ceny) — orientacyjnie, na podstawie powyższych sygnałów.</span></div>
+  </div></div>`;
+}
 
 // ---------- próg cenowy ----------
 function targetSection(e, s) {

@@ -60,6 +60,11 @@ export async function fetchListing(url: string): Promise<Listing> {
     rangeDeclared: num('autonomy'), battery: num('battery_capacity'), consumption: num('avg_consumption'),
     // identyfikatory do adresów wyszukiwania Otomoto (porównanie z rynkiem)
     slugs: { make: param('make')?.value ?? null, model: param('model')?.value ?? null, fuel: param('fuel_type')?.value ?? null },
+    // pierwotna data wystawienia (createdAt zmienia się przy „odświeżeniu” ogłoszenia) i obniżka wg Otomoto
+    // (najniższa cena z 30 dni przed obniżką — dyrektywa Omnibus), do oceny pozycji negocjacyjnej
+    listedAt: ad.originalCreatedAt ?? ad.createdAt ?? null,
+    priceDrop: ad.priceDrop?.lowestPrice?.minorAmount
+      ? { pct: ad.priceDrop.percentage ?? null, lowest: ad.priceDrop.lowestPrice.minorAmount / 100 } : null,
   };
   const est = ad.electricVehicleBatteryEstimation;
   if (est) {
