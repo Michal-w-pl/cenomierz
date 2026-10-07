@@ -5,6 +5,7 @@
 //  • Wywołanie z panelu ({ mine: true } + token): ogłoszenia użytkownika sprawdzane dawniej niż 1 h, porcjami.
 import { admin, CORS, json, refreshAd, sleep, userFrom, vcaTable } from '../_shared/db.ts';
 import { downloadVca, matchOfficial } from '../_shared/wltp.ts';
+import { notifyAdChange } from '../_shared/push.ts';
 
 const BATCH = 25;
 const BUDGET_MS = 110_000;
@@ -70,6 +71,7 @@ async function run(db: ReturnType<typeof admin>, ads: Record<string, any>[], sta
     if (Date.now() - started > BUDGET_MS) break;
     if (processed) await sleep(800);
     const r = await refreshAd(db, a.key, a.url, a, vca);
+    await notifyAdChange(db, a.key, a.url, r);   // push: obniżka / zniknięcie
     processed++;
     if (!r.ok) failed++;
     else if ('changed' in r && r.changed) changed++;

@@ -442,3 +442,6 @@ verify_jwt = false
 
 [functions.share]
 verify_jwt = false
+
+[functions.push]
+verify_jwt = false

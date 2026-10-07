@@ -491,6 +491,7 @@
       <div class="user-menu" id="user-menu" role="menu" hidden>
         <div class="who" id="user-who"></div>
         <button id="alerts-btn" class="switch" role="menuitemcheckbox" aria-checked="true"><span style="display:flex;align-items:center;gap:8px"><svg class="i"><use href="#i-alert"/></svg>Powiadomienia e-mail o obniżkach</span><span class="tgl" aria-hidden="true"></span></button>
+        <button id="push-btn" class="switch" role="menuitemcheckbox" aria-checked="false"><span style="display:flex;align-items:center;gap:8px"><svg class="i"><use href="#i-bolt"/></svg>Powiadomienia push na tym urządzeniu</span><span class="tgl" aria-hidden="true"></span></button>
         <button id="cost-btn" role="menuitem"><svg class="i"><use href="#i-bolt"/></svg>Koszty jazdy elektrykiem</button>
         <button id="share-btn" role="menuitem"><svg class="i"><use href="#i-link"/></svg>Udostępnij Cenomierza</button>
         <button id="logout-btn" role="menuitem"><svg class="i"><use href="#i-x"/></svg>Wyloguj</button>
@@ -2185,7 +2186,52 @@ $('#auth-form').addEventListener('submit', async (ev) => {
 });
 $('#user-btn').addEventListener('click', (ev) => { ev.stopPropagation(); $('#user-menu').hidden = !$('#user-menu').hidden; });
 document.addEventListener('click', (ev) => { if (!ev.target.closest('#user')) $('#user-menu').hidden = true; });
-$('#logout-btn').addEventListener('click', () => sb.auth.signOut());
+$('#logout-btn').addEventListener('click', async () => {
+  // urządzenie przestaje dostawać powiadomienia wylogowanego konta
+  const sub = await currentPushSub().catch(() => null);
+  if (sub) { await callFn('push', { action: 'unsubscribe', endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
+  sb.auth.signOut();
+});
+
+// ---------- powiadomienia push ----------
+const VAPID_PUBLIC_KEY = 'BLhCtagRSwDoQ009onlfmoJ4NnY54TLgijlBIpsq6NQCpdhuATzIevBtuF9j7Lc6Eh_q7r5aEk9LEe7hatqo6Jk';
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const b64uToBytes = (b) => Uint8Array.from(atob(b.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - b.length % 4) % 4)), (c) => c.charCodeAt(0));
+async function currentPushSub() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+function setPushUi(on) { $('#push-btn').setAttribute('aria-checked', String(on)); }
+async function loadPush() { setPushUi(!!(await currentPushSub().catch(() => null)) && Notification.permission === 'granted'); }
+$('#push-btn').addEventListener('click', async (ev) => {
+  ev.stopPropagation();
+  if (!pushSupported()) {
+    return toast(isIOS && !isStandalone()
+      ? 'Na iPhonie powiadomienia działają tylko w zainstalowanej aplikacji: w Safari Udostępnij → „Do ekranu początkowego”, otwórz Cenomierza z ikony i włącz je tutaj.'
+      : 'Ta przeglądarka nie obsługuje powiadomień push.', true);
+  }
+  const on = $('#push-btn').getAttribute('aria-checked') !== 'true';
+  try {
+    if (on) {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') return toast('Powiadomienia są zablokowane — zezwól na nie w ustawieniach przeglądarki lub telefonu.', true);
+      const reg = await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.getSubscription())
+        ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(VAPID_PUBLIC_KEY) });
+      const r = await callFn('push', { action: 'subscribe', subscription: sub.toJSON() });
+      setPushUi(true);
+      toast(r.sent ? 'Włączono — powinno przyjść testowe powiadomienie. W nocy (22–7) powiadomienia czekają do porannego maila.' : 'Włączono, ale testowe powiadomienie nie zostało wysłane.');
+    } else {
+      const sub = await currentPushSub();
+      if (sub) { await callFn('push', { action: 'unsubscribe', endpoint: sub.endpoint }); await sub.unsubscribe(); }
+      setPushUi(false);
+      toast('Wyłączono powiadomienia push na tym urządzeniu.');
+    }
+  } catch (e) { toast('Nie udało się zmienić powiadomień: ' + e.message, true); loadPush(); }
+});
 function setAlertsUi(on) { $('#alerts-btn').setAttribute('aria-checked', String(on)); }
 async function loadAlerts() {
   const { data } = await sb.from('alert_prefs').select('email_drops').maybeSingle();
@@ -2222,8 +2268,13 @@ function showApp(s) {
   $('#user-who').textContent = `Zalogowano jako ${email}`;
   $('#avatar').textContent = email[0] ?? '?';
   if (was !== s.user.id) {
-    refresh().then(() => runImport(pendingImport()));
+    refresh().then(() => {
+      runImport(pendingImport());
+      // link z powiadomienia o nowych ogłoszeniach: …/#wyszukiwania
+      if (location.hash === '#wyszukiwania') { history.replaceState(null, '', location.pathname); setTab('searches'); }
+    });
     loadAlerts();
+    loadPush();
   }
 }
 sb.auth.onAuthStateChange((ev, s) => {

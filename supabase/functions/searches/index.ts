@@ -5,6 +5,7 @@
 // Pierwsze sprawdzenie zapamiętuje obecne wyniki jako „bazowe”; kolejne zapisują tylko ogłoszenia, których nie było.
 import { admin, CORS, json, sleep, userFrom } from '../_shared/db.ts';
 import { fetchSearchPage, type SearchHit } from '../_shared/otomoto.ts';
+import { money, pushToUser } from '../_shared/push.ts';
 
 const DUE_AFTER_MS = 4 * 3600_000;
 const MANUAL_MIN_GAP_MS = 60_000;
@@ -87,5 +88,13 @@ async function check(db: ReturnType<typeof admin>, s: Record<string, any>) {
     if (error) return { ok: false as const, error: error.message };
   }
   await db.from('searches').update({ last_checked: now, last_error: null, total_count: total }).eq('id', s.id);
+  if (!baseline && rows.length) {
+    const h = rows[0], more = rows.length - 1;
+    await pushToUser(db, s.user_id, {
+      title: `Nowe ogłoszenie: ${s.name}`,
+      body: `${h.title ?? 'Ogłoszenie'} — ${money(h.price, h.currency ?? 'PLN')}${more ? ` (i ${more} ${more === 1 ? 'kolejne' : 'kolejnych'})` : ''}`,
+      url: more ? 'https://michal-w-pl.github.io/cenomierz/#wyszukiwania' : h.url, tag: `search-${String(s.id).slice(0, 8)}`,
+    });
+  }
   return { ok: true as const, fresh: baseline ? 0 : rows.length, total, baseline };
 }

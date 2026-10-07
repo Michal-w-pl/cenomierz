@@ -47,7 +47,7 @@ export async function refreshAd(db: SupabaseClient, key: string, url: string, ex
   if (r.status === 'REMOVED') {
     if (!existing) return { ok: false as const, error: 'Ogłoszenie nie istnieje lub zostało usunięte' };
     await db.from('ads').update({ status: 'REMOVED', removed_at: existing.removed_at ?? now, last_checked: now, last_error: null }).eq('key', key);
-    return { ok: true as const, removed: true };
+    return { ok: true as const, removed: true, newlyRemoved: existing.status !== 'REMOVED', title: existing.title as string | null };
   }
   const specs = r.specs?.make ? r.specs : existing?.specs ?? r.specs;
   const row = {
@@ -60,13 +60,14 @@ export async function refreshAd(db: SupabaseClient, key: string, url: string, ex
   };
   const { error } = await db.from('ads').upsert(row);
   if (error) return { ok: false as const, error: error.message };
-  let changed = false;
+  let changed = false, oldPrice: number | null = null;
   if (r.price != null) {
     const { data: last } = await db.from('price_points').select('price').eq('ad_key', key).order('t', { ascending: false }).limit(1).maybeSingle();
     if (!last || Number(last.price) !== r.price) {
       await db.from('price_points').insert({ ad_key: key, t: now, price: r.price });
       changed = !!last;
+      oldPrice = last ? Number(last.price) : null;
     }
   }
-  return { ok: true as const, changed, title: row.title as string };
+  return { ok: true as const, changed, title: row.title as string, oldPrice, newPrice: r.price, currency: r.currency, image: row.image as string | null };
 }
