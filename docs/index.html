@@ -339,6 +339,25 @@
   .user-menu button:hover { background: var(--surface-2); }
   @media (max-width: 640px) { .user-btn .email { display: none; } .user { position: absolute; right: 16px; top: 10px; } }
 
+  /* ---------- rynek ---------- */
+  .mkt-row { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; font-size: 12.5px; color: var(--text-3); }
+  .mkt-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .mkt-grid .stat { padding: 10px 12px; }
+  .mkt-grid .stat + .stat { border-left: 1px solid var(--border); }
+  .mkt-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--text-2); margin: 12px 0 4px; }
+  .mkt-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .mkt-legend .line { width: 16px; border-top: 2px dashed var(--text-3); }
+  .mkt-chart { position: relative; height: 280px; }
+  .mkt-chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .mkt-chart text { fill: var(--text-3); font-size: 11px; font-family: inherit; }
+  .mkt-chart .grid-line { stroke: var(--grid); stroke-width: 1; }
+  .mkt-chart .axis { stroke: var(--border-strong); stroke-width: 1; }
+  .mkt-list { margin-top: 10px; font-size: 13px; }
+  .mkt-list summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+  .mkt-list table { margin-top: 8px; }
+  .mkt-list tr.self td { font-weight: 700; background: var(--accent-soft); }
+  @media (max-width: 640px) { .mkt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .mkt-grid .stat:nth-child(3) { border-left: 0; } .mkt-grid .stat:nth-child(n+3) { border-top: 1px solid var(--border); } }
+
   /* ---------- wyszukiwania ---------- */
   .search-add { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 8px; }
   .search-add input { height: 40px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); outline: none; min-width: 0; }
@@ -530,6 +549,7 @@
       <option value="price-desc">Cena: od najwyższej</option>
       <option value="wltp-desc">Zasięg WLTP: od największego</option>
       <option value="batt-desc">Bateria: od największej</option>
+      <option value="market">Najtańsze względem rynku</option>
       <option value="added">Ostatnio dodane</option>
     </select>
   </div>
@@ -819,6 +839,7 @@ function card(e) {
       <div class="price num">${fmt(s.last)}<small>${e.currency === 'PLN' ? 'zł' : esc(e.currency)}</small>${s.diff ? `<span class="was num">${fmt(s.first)}</span>` : ''}</div>
       ${s.removed ? '<span class="pill warn">Ogłoszenie usunięte</span>' : deltaPill(s, e.currency)}
     </div>
+    ${mktRow(e)}
     <div class="chart-host" data-chart="${esc(e.key)}"></div>
     <div class="card-foot">
       <span>${s.changes ? `<b class="num">${s.changes}</b> ${plural(s.changes, 'zmiana', 'zmiany', 'zmian')} ceny` : 'Cena stała'}${e.lastError ? ` <span class="warn-ico" title="${esc(e.lastError)}">${icon('alert')}</span>` : ''}</span>
@@ -829,6 +850,7 @@ function card(e) {
 
 // Malejąco; ogłoszenia bez wartości (np. spalinowe) na końcu.
 const descNullsLast = (x, y) => (x == null) - (y == null) || (x == null ? 0 : y - x);
+const ascNullsLast = (x, y) => (x == null) - (y == null) || (x == null ? 0 : x - y);
 
 function filtered() {
   const f = SEGS.find(([k]) => k === view.seg)[2];
@@ -842,6 +864,7 @@ function filtered() {
     added: (a, b) => b.addedAt.localeCompare(a.addedAt),
     'wltp-desc': (a, b) => descNullsLast(wltpInfo(a).value, wltpInfo(b).value),
     'batt-desc': (a, b) => descNullsLast(battOf(a), battOf(b)),
+    market: (a, b) => ascNullsLast(mkt(a)?.pct, mkt(b)?.pct),
   }[view.sort];
   return items.sort((a, b) => (a.status === 'REMOVED') - (b.status === 'REMOVED') || by(a, b));
 }
@@ -884,7 +907,7 @@ const toListing = (w) => {
   return {
     key: w.ad_key, url: a.url, title: a.title, image: a.image, features: a.features ?? [], location: a.location,
     currency: a.currency, specs: a.specs, official: a.official, status: a.status, removedAt: a.removed_at,
-    lastChecked: a.last_checked, lastError: a.last_error, addedAt: w.added_at, wltpManual: w.wltp_manual,
+    lastChecked: a.last_checked, lastError: a.last_error, addedAt: w.added_at, wltpManual: w.wltp_manual, marketUrl: a.market_url,
     history: (a.price_points ?? []).map((p) => ({ t: p.t, price: Number(p.price) })).sort((x, y) => x.t.localeCompare(y.t)),
   };
 };
@@ -902,6 +925,7 @@ async function refresh() {
   if (!sr.error) state.searches = sr.data ?? [];
   state.listings = (w.data ?? []).filter((x) => x.ads).map(toListing).filter((e) => e.history.length);
   state.vca = m.data?.value ?? null;
+  await loadMarket();
   render();
 }
 
@@ -1271,7 +1295,7 @@ function renderGroups(items) {
 }
 
 // Najbliższy punkt w promieniu 28 px dostaje tooltip; klik otwiera szczegóły ogłoszenia.
-function attachNearest(host, dots, content) {
+function attachNearest(host, dots, content, onPick = (d) => openDetail(d.e.key)) {
   const svg = host.firstElementChild;
   const circles = [...svg.querySelectorAll('circle.pt')];
   let cur = -1;
@@ -1283,15 +1307,15 @@ function attachNearest(host, dots, content) {
   };
   host.onpointermove = (ev) => {
     const { best, r } = find(ev);
-    if (cur >= 0 && cur !== best) circles[cur].setAttribute('r', 5);
+    if (cur >= 0 && cur !== best) circles[cur].setAttribute('r', dots[cur].r ?? 5);
     cur = best;
     host.style.cursor = best >= 0 ? 'pointer' : '';
     if (best < 0) return hideTip();
-    circles[best].setAttribute('r', 7);
+    circles[best].setAttribute('r', (dots[best].r ?? 5) + 2);
     showTip(content(dots[best]), r.left + dots[best].cx, r.top + dots[best].cy);
   };
-  host.onpointerleave = () => { if (cur >= 0) circles[cur].setAttribute('r', 5); cur = -1; hideTip(); };
-  host.onclick = (ev) => { const { best } = find(ev); if (best >= 0) { hideTip(); openDetail(dots[best].e.key); } };
+  host.onpointerleave = () => { if (cur >= 0) circles[cur].setAttribute('r', dots[cur].r ?? 5); cur = -1; hideTip(); };
+  host.onclick = (ev) => { const { best } = find(ev); if (best >= 0) { hideTip(); onPick(dots[best]); } };
 }
 
 function renderScatter(items) {
@@ -1341,6 +1365,134 @@ function renderScatter(items) {
   ]);
 }
 
+// ---------- porównanie z rynkiem ----------
+// Próbka: do 64 najnowszych ofert z Otomoto tej samej marki, modelu i paliwa, rocznik ±1 (funkcja market, co 3 dni).
+// Z próbki bierzemy auta o mocy ±15% (za mało → ±30%, nadal za mało → brak porównania, żeby nie zestawiać innych
+// wersji) i odrzucamy ceny poniżej połowy / powyżej dwukrotności mediany (cesje leasingu, raty, pomyłki). Cena odniesienia: cena oczekiwana przy tym
+// przebiegu (prosta regresja cena ~ przebieg, gdy jest ≥ 8 ofert i przebieg mieści się w ich zakresie), inaczej mediana.
+const MIN_CMP = 5;
+const market = new Map();   // marketUrl → próbka
+async function loadMarket() {
+  const urls = [...new Set(state.listings.map((e) => e.marketUrl).filter(Boolean))];
+  market.clear();
+  for (let i = 0; i < urls.length; i += 10) {
+    const { data } = await sb.from('market_samples').select('url, fetched_at, total, hits').in('url', urls.slice(i, i + 10));
+    (data ?? []).forEach((m) => market.set(m.url, m));
+  }
+  state.listings.forEach((e) => { e.market = computeMarket(e); });
+}
+const mkt = (e) => (e.market && !e.market.tooFew ? e.market : null);
+const median = (sorted) => sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+function computeMarket(e) {
+  const sample = e.marketUrl && market.get(e.marketUrl);
+  const s = stats(e), price = s.last;
+  if (!sample || price == null || s.removed) return null;
+  let pool = (sample.hits ?? []).filter((h) => h.k !== e.key && h.p > 0 && h.c === e.currency);
+  const pw = e.specs?.power;
+  let powerMatched = false;
+  if (pw && pool.some((h) => h.pw)) {
+    const near = (tol) => pool.filter((h) => h.pw && Math.abs(h.pw - pw) / pw <= tol);
+    pool = near(0.15).length >= MIN_CMP ? near(0.15) : near(0.3);
+    powerMatched = true;
+  }
+  if (pool.length) {
+    const mid = median(pool.map((h) => h.p).sort((a, b) => a - b));
+    pool = pool.filter((h) => h.p >= mid / 2 && h.p <= mid * 2);
+  }
+  const base = { n: pool.length, total: sample.total, fetchedAt: sample.fetched_at, pool, powerMatched, price };
+  if (pool.length < MIN_CMP) return { ...base, tooFew: true };
+  const prices = pool.map((h) => h.p).sort((a, b) => a - b);
+  const med = median(prices);
+  let expected = null, fit = null;
+  const m = e.specs?.mileage, pm = pool.filter((h) => h.m != null);
+  if (m != null && pm.length >= 8) {
+    const mx = avg(pm.map((h) => h.m)), my = avg(pm.map((h) => h.p));
+    const sxx = pm.reduce((a, h) => a + (h.m - mx) ** 2, 0), sxy = pm.reduce((a, h) => a + (h.m - mx) * (h.p - my), 0);
+    const b = sxx ? sxy / sxx : 0, a0 = my - b * mx;
+    const lo = Math.min(...pm.map((h) => h.m)), hi = Math.max(...pm.map((h) => h.m));
+    if (b < 0 && m >= lo && m <= hi && a0 + b * m > 0) { expected = a0 + b * m; fit = { a: a0, b, lo, hi }; }
+  }
+  const ref = expected ?? med;
+  return { ...base, median: med, expected, fit, ref, pct: (price - ref) / ref * 100,
+    cheaperThan: pool.filter((h) => h.p > price).length / pool.length, min: prices[0], max: prices.at(-1) };
+}
+const mktTone = (pct) => (pct <= -3 ? 'good' : pct >= 3 ? 'bad' : 'neutral');
+const mktLabel = (pct) => (Math.abs(pct) < 3 ? 'cena rynkowa' : `${pctS(pct)} ${pct < 0 ? 'poniżej' : 'powyżej'} rynku`);
+function mktRow(e) {
+  const r = mkt(e);
+  if (!r) return '';
+  return `<div class="mkt-row"><span class="pill ${mktTone(r.pct)}" title="Względem ${r.expected ? 'ceny oczekiwanej przy tym przebiegu' : 'mediany'} ${r.n} podobnych ofert z Otomoto">${mktLabel(r.pct)}</span>
+    <span>vs ${r.n} ${plural(r.n, 'podobna oferta', 'podobne oferty', 'podobnych ofert')}</span></div>`;
+}
+function mktSection(e) {
+  const r = e.market, sp = e.specs ?? {};
+  if (!r) return '';
+  const crit = [[sp.make, sp.model].filter(Boolean).join(' '), sp.year ? `rocznik ${sp.year - 1}–${sp.year + 1}` : null, sp.fuel?.toLowerCase(),
+    r.powerMatched ? `moc zbliżona do ${fmt(sp.power)} KM` : null].filter(Boolean).join(', ');
+  const foot = `<div class="note" style="margin-top:8px">Porównanie z ${r.n} ${plural(r.n, 'ofertą', 'ofertami', 'ofertami')} z Otomoto: ${esc(crit)}. Próbka pobrana ${ago(r.fetchedAt)}.
+    <a href="${esc(e.marketUrl)}" target="_blank" rel="noopener" style="color:var(--accent)">Wszystkie oferty (${fmt(r.total)})</a></div>`;
+  if (r.tooFew) return `<div class="dlg-section"><h3>Na tle rynku</h3><p class="sub">Za mało podobnych ofert na Otomoto (${r.n}), żeby wiarygodnie porównać cenę.</p>${foot}</div>`;
+  const st = (l, v) => `<div class="stat"><div class="stat-label">${l}</div><div class="stat-value num">${v}</div></div>`;
+  const rows = [...r.pool, { k: e.key, self: true, t: e.title, u: e.url, p: r.price, y: sp.year, m: sp.mileage, pw: sp.power }]
+    .sort((a, b) => a.p - b.p).map((h) => `<tr class="${h.self ? 'self' : ''}"><td><a href="${esc(h.u)}" target="_blank" rel="noopener">${esc(h.self ? 'To ogłoszenie' : h.t)}</a></td>
+      <td class="num">${h.y ?? '—'}</td><td class="num">${h.m != null ? fmt(h.m) + ' km' : '—'}</td><td class="num">${h.pw ? h.pw + ' KM' : '—'}</td><td class="num"><b>${money(h.p, e.currency)}</b></td></tr>`).join('');
+  return `<div class="dlg-section"><h3>Na tle rynku</h3>
+    <div class="mkt-grid">
+      ${st('Ta oferta', `<span class="pill ${mktTone(r.pct)}">${mktLabel(r.pct)}</span>`)}
+      ${st('Mediana podobnych', money(r.median, e.currency))}
+      ${r.expected ? st('Oczekiwana przy tym przebiegu', money(r.expected, e.currency)) : st('Zakres cen', `${compact(r.min)}–${compact(r.max)}`)}
+      ${st('Taniej niż', `${Math.round(r.cheaperThan * 100)}% <small>ofert</small>`)}
+    </div>
+    <div class="mkt-legend">
+      <span><span class="dotkey" style="background:var(--s-other)"></span>Podobne oferty (${r.n})</span>
+      <span><span class="dotkey" style="background:var(--accent)"></span>To ogłoszenie</span>
+      ${r.fit ? '<span><span class="line"></span>Typowa cena przy danym przebiegu</span>' : ''}
+    </div>
+    <div class="mkt-chart" id="mkt-chart"></div>
+    <details class="mkt-list"><summary>Lista ofert (${r.n + 1})</summary>
+      <table><thead><tr><th>Oferta</th><th>Rocznik</th><th>Przebieg</th><th>Moc</th><th>Cena</th></tr></thead><tbody>${rows}</tbody></table></details>
+    ${foot}</div>`;
+}
+// Wykres: cena (oś Y) w zależności od przebiegu (oś X); to ogłoszenie wyróżnione kolorem akcentu.
+function drawMarket(host, e) {
+  const r = mkt(e);
+  if (!r) return;
+  const self = { k: e.key, self: true, t: e.title, u: e.url, p: r.price, y: e.specs?.year, m: e.specs?.mileage, pw: e.specs?.power };
+  const pts = [...r.pool, self].filter((h) => h.m != null);
+  if (pts.length < 3) { host.style.height = 'auto'; host.innerHTML = '<p class="sub">Brak danych o przebiegu, żeby narysować wykres.</p>'; return; }
+  const W = host.clientWidth, H = 280, pad = { l: 64, r: 16, t: 12, b: 40 };
+  let [xlo, xhi] = padRange(Math.min(...pts.map((h) => h.m)), Math.max(...pts.map((h) => h.m)), 0.06);
+  let [ylo, yhi] = padRange(Math.min(...pts.map((h) => h.p)), Math.max(...pts.map((h) => h.p)), 0.12);
+  xlo = Math.max(0, xlo); ylo = Math.max(0, ylo);
+  const x = (v) => pad.l + (v - xlo) / (xhi - xlo) * (W - pad.l - pad.r);
+  const y = (v) => pad.t + (yhi - v) / (yhi - ylo) * (H - pad.t - pad.b);
+  let grid = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = ylo + (yhi - ylo) * i / 4;
+    grid += `<line class="grid-line" x1="${pad.l}" x2="${W - pad.r}" y1="${y(v)}" y2="${y(v)}"/><text x="${pad.l - 10}" y="${y(v) + 4}" text-anchor="end">${compact(v)}</text>`;
+  }
+  for (let i = 0; i <= 4; i++) {
+    const v = xlo + (xhi - xlo) * i / 4;
+    grid += `<text x="${x(v)}" y="${H - pad.b + 18}" text-anchor="${i === 0 ? 'start' : i === 4 ? 'end' : 'middle'}">${compact(v)} km</text>`;
+  }
+  const fitLine = r.fit ? `<line x1="${x(r.fit.lo)}" x2="${x(r.fit.hi)}" y1="${y(r.fit.a + r.fit.b * r.fit.lo)}" y2="${y(r.fit.a + r.fit.b * r.fit.hi)}" stroke="var(--text-3)" stroke-width="2" stroke-dasharray="5 4"/>` : '';
+  // to ogłoszenie rysowane na końcu, żeby było na wierzchu
+  const dots = [...pts.filter((h) => !h.self), self].filter((h) => h.m != null)
+    .map((h) => ({ h, cx: x(h.m), cy: y(h.p), r: h.self ? 7 : 5 }));
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Cena w zależności od przebiegu na tle ${r.n} podobnych ofert">
+    ${grid}
+    <line class="axis" x1="${pad.l}" x2="${W - pad.r}" y1="${H - pad.b}" y2="${H - pad.b}"/>
+    <text x="${W - pad.r}" y="${H - 4}" text-anchor="end" style="font-weight:600">Przebieg (km) →</text>
+    ${fitLine}
+    ${dots.map((d) => `<circle class="pt" cx="${d.cx}" cy="${d.cy}" r="${d.r}" fill="${d.h.self ? 'var(--accent)' : 'var(--s-other)'}" stroke="var(--surface)" stroke-width="2"/>`).join('')}
+  </svg>`;
+  attachNearest(host, dots, (d) => [
+    el('span', 'v num', money(d.h.p, e.currency)),
+    el('span', 'd', d.h.self ? 'To ogłoszenie' : d.h.t),
+    el('div', 'd', [d.h.y, d.h.m != null ? `${fmt(d.h.m)} km` : null, d.h.pw ? `${d.h.pw} KM` : null].filter(Boolean).join(' · ')),
+  ], (d) => { if (!d.h.self) open(d.h.u, '_blank', 'noopener'); });
+}
+
 // ---------- detail dialog ----------
 function evSection(e) {
   const v = e.specs?.ev || {}, b = battOf(e);
@@ -1388,6 +1540,7 @@ function openDetail(key) {
       ${stat('Obserwowane od', dateS(e.addedAt))}
     </div>
     ${isEV(e) ? evSection(e) : ''}
+    ${mktSection(e)}
     <div class="dlg-section"><h3>Cena w czasie</h3><div class="chart-host lg" id="dlg-chart"></div></div>
     <div class="dlg-section"><h3>Historia zmian</h3>
       <table><thead><tr><th>Data</th><th>Cena</th><th>Zmiana</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -1395,8 +1548,10 @@ function openDetail(key) {
       <span class="sub" style="font-size:12.5px">Ostatnio sprawdzono: ${e.lastChecked ? dateL(e.lastChecked) : '—'}${e.lastError ? ` · <span style="color:var(--warn)">${esc(e.lastError)}</span>` : ''}</span>
       <button class="btn btn-ghost btn-sm btn-danger" data-del="${esc(e.key)}">${icon('trash')}Przestań obserwować</button>
     </div>`;
+  dlg.append($('#tip'));   // dymki wykresów muszą być w oknie (warstwa modalna przykrywa resztę strony)
   dlg.showModal();
   drawChart($('#dlg-chart'), e, { axes: true });
+  if ($('#mkt-chart')) drawMarket($('#mkt-chart'), e);
 }
 
 $('#dlg').addEventListener('click', async (ev) => {
@@ -1407,7 +1562,7 @@ $('#dlg').addEventListener('click', async (ev) => {
   dlg.close();
   removeKeys([del.dataset.del]);
 });
-$('#dlg').addEventListener('close', () => $('#tip').classList.remove('show'));
+$('#dlg').addEventListener('close', () => { $('#tip').classList.remove('show'); document.body.append($('#tip')); });
 
 // ---------- edycja zasięgu WLTP ----------
 document.addEventListener('click', (ev) => {

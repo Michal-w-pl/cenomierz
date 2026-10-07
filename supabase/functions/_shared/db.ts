@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
-import { fetchListing } from './otomoto.ts';
+import { fetchListing, marketUrl } from './otomoto.ts';
 import { matchOfficial, type VcaRow } from './wltp.ts';
 
 export const admin = () =>
@@ -56,7 +56,7 @@ export async function refreshAd(db: SupabaseClient, key: string, url: string, ex
     features: r.features.length ? r.features : existing?.features ?? [],
     location: r.location ?? existing?.location, currency: r.currency,
     specs, official: isEv(specs) ? matchOfficial(specs, vca) : null,
-    status: r.status, removed_at: null, last_checked: now, last_error: null,
+    status: r.status, removed_at: null, last_checked: now, last_error: null, market_url: marketUrl(specs),
   };
   const { error } = await db.from('ads').upsert(row);
   if (error) return { ok: false as const, error: error.message };

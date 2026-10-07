@@ -58,6 +58,8 @@ export async function fetchListing(url: string): Promise<Listing> {
     fuel: label('fuel_type'), gearbox: label('gearbox'), drive: label('transmission'), body: label('body_type'),
     color: label('color'), damaged: label('damaged'), imported: param('is_imported_car') ? label('is_imported_car') : null,
     rangeDeclared: num('autonomy'), battery: num('battery_capacity'), consumption: num('avg_consumption'),
+    // identyfikatory do adresów wyszukiwania Otomoto (porównanie z rynkiem)
+    slugs: { make: param('make')?.value ?? null, model: param('model')?.value ?? null, fuel: param('fuel_type')?.value ?? null },
   };
   const est = ad.electricVehicleBatteryEstimation;
   if (est) {
@@ -151,4 +153,16 @@ export async function fetchSearchPage(searchUrl: string, page = 1): Promise<Sear
     });
   }
   return { ok: true, total: Number(search.totalCount) || hits.length, hits };
+}
+
+/** Wyszukiwanie podobnych ofert (ta sama marka, model i paliwo, rocznik ±1) do porównania ceny z rynkiem. */
+// deno-lint-ignore no-explicit-any
+export function marketUrl(specs: any): string | null {
+  const s = specs?.slugs;
+  if (!s?.make || !s?.model || !specs?.year) return null;
+  const u = new URL(`https://www.otomoto.pl/osobowe/${encodeURIComponent(s.make)}/${encodeURIComponent(s.model)}`);
+  u.searchParams.set('search[filter_float_year:from]', String(specs.year - 1));
+  u.searchParams.set('search[filter_float_year:to]', String(specs.year + 1));
+  if (s.fuel) u.searchParams.set('search[filter_enum_fuel_type]', s.fuel);
+  return u.toString();
 }
