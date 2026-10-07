@@ -322,6 +322,13 @@
   .auth-switch { text-align: center; margin-top: 14px; font-size: 13.5px; color: var(--text-2); }
   .auth-switch button { border: 0; background: none; color: var(--accent); font-weight: 600; cursor: pointer; padding: 0; }
   .auth-err { color: var(--bad); font-size: 13px; min-height: 18px; margin: -4px 0 8px; }
+  .auth-err.info { color: var(--good); }
+  .auth-forgot { display: block; margin: -6px 0 10px auto; border: 0; background: none; color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 0; }
+  .user-menu .switch { justify-content: space-between; }
+  .user-menu .switch .tgl { width: 30px; height: 18px; border-radius: 9px; background: var(--border-strong); position: relative; flex: none; transition: background .15s; }
+  .user-menu .switch .tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface); transition: transform .15s; }
+  .user-menu .switch[aria-checked="true"] .tgl { background: var(--accent); }
+  .user-menu .switch[aria-checked="true"] .tgl::after { transform: translateX(12px); }
   .auth-note { font-size: 12px; color: var(--text-3); margin-top: 14px; line-height: 1.45; }
   .user { position: relative; flex: none; }
   .user-btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 10px 0 6px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-weight: 500; }
@@ -418,6 +425,7 @@
       <button class="user-btn" id="user-btn" aria-haspopup="menu"><span class="avatar" id="avatar"></span><span class="email" id="user-email"></span></button>
       <div class="user-menu" id="user-menu" role="menu" hidden>
         <div class="who" id="user-who"></div>
+        <button id="alerts-btn" class="switch" role="menuitemcheckbox" aria-checked="true"><span style="display:flex;align-items:center;gap:8px"><svg class="i"><use href="#i-alert"/></svg>Powiadomienia e-mail o obniżkach</span><span class="tgl" aria-hidden="true"></span></button>
         <button id="share-btn" role="menuitem"><svg class="i"><use href="#i-link"/></svg>Udostępnij Cenomierza</button>
         <button id="logout-btn" role="menuitem"><svg class="i"><use href="#i-x"/></svg>Wyloguj</button>
       </div>
@@ -434,11 +442,12 @@
     </svg>
     <h1 id="auth-title">Zaloguj się</h1>
     <p class="sub" id="auth-sub">Twoje obserwowane ogłoszenia, historia cen i porównania.</p>
-    <div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required></div>
-    <div class="field"><label for="auth-pass">Hasło</label><input id="auth-pass" type="password" autocomplete="current-password" minlength="8" required></div>
+    <div class="field" id="auth-email-field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required></div>
+    <div class="field"><label for="auth-pass" id="auth-pass-label">Hasło</label><input id="auth-pass" type="password" autocomplete="current-password" minlength="8" required></div>
+    <button type="button" class="auth-forgot" id="auth-forgot">Nie pamiętasz hasła?</button>
     <div class="auth-err" id="auth-err" role="alert"></div>
     <button class="btn btn-primary" id="auth-submit">Zaloguj się</button>
-    <div class="auth-switch"><span id="auth-switch-text">Nie masz konta?</span> <button type="button" id="auth-switch">Załóż konto</button></div>
+    <div class="auth-switch" id="auth-switch-row"><span id="auth-switch-text">Nie masz konta?</span> <button type="button" id="auth-switch">Załóż konto</button></div>
     <p class="auth-note">Każdy użytkownik ma własną listę obserwowanych ogłoszeń — nikt inny jej nie widzi ani nie zmienia. Ceny są sprawdzane automatycznie raz dziennie.</p>
   </form>
 </section>
@@ -1496,37 +1505,84 @@ function pendingImport() {
 
 // ---------- konto ----------
 let authMode = 'login';
+// tryby: login | signup | newpass (ustawianie nowego hasła po kliknięciu linku z maila)
 function setAuthMode(m) {
   authMode = m;
-  const signup = m === 'signup';
-  $('#auth-title').textContent = signup ? 'Załóż konto' : 'Zaloguj się';
-  $('#auth-submit').textContent = signup ? 'Załóż konto' : 'Zaloguj się';
+  const signup = m === 'signup', newpass = m === 'newpass';
+  $('#auth-title').textContent = newpass ? 'Ustaw nowe hasło' : signup ? 'Załóż konto' : 'Zaloguj się';
+  $('#auth-submit').textContent = newpass ? 'Zapisz hasło' : signup ? 'Załóż konto' : 'Zaloguj się';
   $('#auth-switch-text').textContent = signup ? 'Masz już konto?' : 'Nie masz konta?';
   $('#auth-switch').textContent = signup ? 'Zaloguj się' : 'Załóż konto';
-  $('#auth-pass').autocomplete = signup ? 'new-password' : 'current-password';
-  $('#auth-err').textContent = '';
+  $('#auth-pass-label').textContent = newpass ? 'Nowe hasło' : 'Hasło';
+  $('#auth-pass').autocomplete = signup || newpass ? 'new-password' : 'current-password';
+  $('#auth-email-field').hidden = newpass;
+  $('#auth-switch-row').hidden = newpass;
+  $('#auth-forgot').hidden = m !== 'login';
+  authMsg('');
+}
+function authMsg(text, info) {
+  $('#auth-err').textContent = text;
+  $('#auth-err').classList.toggle('info', !!info);
 }
 $('#auth-switch').addEventListener('click', () => setAuthMode(authMode === 'login' ? 'signup' : 'login'));
 const AUTH_ERR = {
   'Invalid login credentials': 'Nieprawidłowy e-mail lub hasło.',
   'User already registered': 'Konto z tym adresem już istnieje — zaloguj się.',
   'Password should be at least 8 characters.': 'Hasło musi mieć co najmniej 8 znaków.',
+  'Email not confirmed': 'Najpierw potwierdź adres — kliknij link z maila, który wysłaliśmy przy zakładaniu konta.',
+  'New password should be different from the old password.': 'Nowe hasło musi się różnić od poprzedniego.',
 };
+const SITE_URL = location.origin + location.pathname;
+$('#auth-forgot').addEventListener('click', async () => {
+  const email = $('#auth-email').value.trim();
+  if (!/^\S+@\S+\.\S+$/.test(email)) return authMsg('Wpisz powyżej adres e-mail konta, a wyślemy link do zmiany hasła.');
+  const btn = $('#auth-forgot'); btn.disabled = true;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: SITE_URL });
+  btn.disabled = false;
+  if (error) return authMsg(/rate limit|security purposes/i.test(error.message) ? 'Link został już wysłany — odczekaj minutę i spróbuj ponownie.' : error.message);
+  authMsg(`Jeśli konto ${email} istnieje, wysłaliśmy na nie link do ustawienia nowego hasła. Sprawdź też folder spam.`, true);
+});
 $('#auth-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const email = $('#auth-email').value.trim(), password = $('#auth-pass').value;
-  if (!/^\S+@\S+\.\S+$/.test(email)) return ($('#auth-err').textContent = 'Podaj poprawny adres e-mail.');
-  if (password.length < 8) return ($('#auth-err').textContent = 'Hasło musi mieć co najmniej 8 znaków.');
+  if (authMode !== 'newpass' && !/^\S+@\S+\.\S+$/.test(email)) return authMsg('Podaj poprawny adres e-mail.');
+  if (password.length < 8) return authMsg('Hasło musi mieć co najmniej 8 znaków.');
   const btn = $('#auth-submit'); btn.disabled = true;
-  const { error } = authMode === 'signup'
-    ? await sb.auth.signUp({ email, password })
+  if (authMode === 'newpass') {
+    const { error } = await sb.auth.updateUser({ password });
+    btn.disabled = false;
+    if (error) return authMsg(AUTH_ERR[error.message] ?? error.message);
+    $('#auth-pass').value = '';
+    setAuthMode('login');
+    showApp((await sb.auth.getSession()).data.session);
+    return toast('Zapisano nowe hasło.');
+  }
+  const { data, error } = authMode === 'signup'
+    ? await sb.auth.signUp({ email, password, options: { emailRedirectTo: SITE_URL } })
     : await sb.auth.signInWithPassword({ email, password });
   btn.disabled = false;
-  if (error) $('#auth-err').textContent = AUTH_ERR[error.message] ?? error.message;
+  if (error) return authMsg(AUTH_ERR[error.message] ?? error.message);
+  if (authMode === 'signup' && !data.session) {
+    setAuthMode('login');
+    authMsg(`Wysłaliśmy link potwierdzający na ${email}. Kliknij go, a potem zaloguj się tutaj. Sprawdź też folder spam.`, true);
+  }
 });
 $('#user-btn').addEventListener('click', (ev) => { ev.stopPropagation(); $('#user-menu').hidden = !$('#user-menu').hidden; });
 document.addEventListener('click', (ev) => { if (!ev.target.closest('#user')) $('#user-menu').hidden = true; });
 $('#logout-btn').addEventListener('click', () => sb.auth.signOut());
+function setAlertsUi(on) { $('#alerts-btn').setAttribute('aria-checked', String(on)); }
+async function loadAlerts() {
+  const { data } = await sb.from('alert_prefs').select('email_drops').maybeSingle();
+  setAlertsUi(data?.email_drops ?? true);
+}
+$('#alerts-btn').addEventListener('click', async (ev) => {
+  ev.stopPropagation();
+  const on = $('#alerts-btn').getAttribute('aria-checked') !== 'true';
+  setAlertsUi(on);
+  const { error } = await sb.from('alert_prefs').upsert({ user_id: session.user.id, email_drops: on });
+  if (error) { setAlertsUi(!on); return toast('Nie udało się zapisać ustawienia: ' + error.message, true); }
+  toast(on ? `Włączono powiadomienia — raz dziennie mail na ${session.user.email}, gdy coś potanieje.` : 'Wyłączono powiadomienia e-mail.');
+});
 $('#share-btn').addEventListener('click', async () => {
   $('#user-menu').hidden = true;
   const url = location.origin + location.pathname;
@@ -1551,9 +1607,15 @@ function showApp(s) {
   $('#avatar').textContent = email[0] ?? '?';
   if (was !== s.user.id) {
     refresh().then(() => runImport(pendingImport()));
+    loadAlerts();
   }
 }
-sb.auth.onAuthStateChange((_ev, s) => showApp(s));
+sb.auth.onAuthStateChange((ev, s) => {
+  // link „ustaw nowe hasło” z maila loguje użytkownika — najpierw pokazujemy formularz nowego hasła
+  if (ev === 'PASSWORD_RECOVERY') { showApp(null); setAuthMode('newpass'); $('#auth-pass').focus(); return; }
+  if (authMode === 'newpass') { if (ev === 'SIGNED_OUT') setAuthMode('login'); return; }
+  showApp(s);
+});
 
 let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => (view.tab === 'compare' ? renderCompare() : renderGrid()), 150); });
 setInterval(() => { if (!state.checking && !state.importing) refresh(); }, 5 * 60_000);
