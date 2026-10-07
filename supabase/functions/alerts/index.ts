@@ -9,14 +9,18 @@ const MAX_HITS_PER_SEARCH = 12;
 
 type Drop = {
   user_id: string; email: string; ad_key: string; title: string | null; url: string; image: string | null;
-  currency: string; old_price: number; new_price: number; changed_at: string;
+  currency: string; old_price: number; new_price: number; changed_at: string; target_price: number | null;
+};
+type Removed = {
+  user_id: string; email: string; ad_key: string; title: string | null; url: string; image: string | null;
+  currency: string; last_price: number | null; removed_at: string; added_at: string;
 };
 type Hit = {
   user_id: string; email: string; search_name: string; search_url: string; ad_key: string; title: string | null;
   url: string; image: string | null; price: number | null; currency: string | null; location: string | null;
   params: { year?: number | null; mileage?: number | null; power?: number | null; fuel?: string | null };
 };
-type Digest = { email: string; drops: Drop[]; hits: Hit[] };
+type Digest = { email: string; drops: Drop[]; hits: Hit[]; removed: Removed[] };
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Metoda niedozwolona' }, 405);
@@ -25,23 +29,25 @@ Deno.serve(async (req) => {
   const db = admin();
   const until = new Date().toISOString();
 
-  const [d, h] = await Promise.all([
+  const [d, h, r] = await Promise.all([
     db.rpc('pending_drop_alerts', { until }),
     db.rpc('pending_search_alerts', { until }),
+    db.rpc('pending_removed_alerts', { until }),
   ]);
-  if (d.error || h.error) return json({ error: (d.error ?? h.error)!.message }, 500);
+  if (d.error || h.error || r.error) return json({ error: (d.error ?? h.error ?? r.error)!.message }, 500);
   const byUser = new Map<string, Digest>();
   const digest = (id: string, email: string) => {
-    if (!byUser.has(id)) byUser.set(id, { email, drops: [], hits: [] });
+    if (!byUser.has(id)) byUser.set(id, { email, drops: [], hits: [], removed: [] });
     return byUser.get(id)!;
   };
   for (const x of (d.data ?? []) as Drop[]) digest(x.user_id, x.email).drops.push(x);
   for (const x of (h.data ?? []) as Hit[]) digest(x.user_id, x.email).hits.push(x);
+  for (const x of (r.data ?? []) as Removed[]) digest(x.user_id, x.email).removed.push(x);
 
   // { dryRun: true } — podgląd bez wysyłki i bez oznaczania jako wysłane (tylko z kluczem service role)
   const isAdmin = req.headers.get('Authorization') === `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`;
   if (body.dryRun && !isAdmin) return json({ error: 'Brak uprawnień' }, 403);
-  if (body.dryRun) return json({ users: byUser.size, digests: [...byUser.values()].map((g) => ({ subject: subject(g), drops: g.drops.length, hits: g.hits.length })) });
+  if (body.dryRun) return json({ users: byUser.size, digests: [...byUser.values()].map((g) => ({ subject: subject(g), drops: g.drops.length, hits: g.hits.length, removed: g.removed.length })) });
 
   const apiKey = Deno.env.get('BREVO_API_KEY'), from = Deno.env.get('ALERT_FROM');
   if (!apiKey || !from) return json({ error: 'Brak sekretów BREVO_API_KEY / ALERT_FROM' }, 500);
@@ -70,6 +76,7 @@ Deno.serve(async (req) => {
 
 const fmt = (n: number) => Math.round(n).toLocaleString('pl-PL').replace(/\s/g, ' ');
 const money = (n: number | null, cur: string | null) => n == null ? '—' : `${fmt(n)} ${!cur || cur === 'PLN' ? 'zł' : cur}`;
+const dateS = (t: string) => new Date(t).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', timeZone: 'Europe/Warsaw' });
 const pct = (d: Drop) => ((d.new_price - d.old_price) / d.old_price * 100).toLocaleString('pl-PL', { maximumFractionDigits: 1 });
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const plural = (n: number, one: string, few: string, many: string) =>
@@ -90,15 +97,19 @@ function bySearch(hits: Hit[]) {
 
 function subject(g: Digest) {
   const parts: string[] = [];
-  if (g.drops.length === 1 && !g.hits.length) {
+  if (g.drops.length === 1 && !g.hits.length && !g.removed.length) {
     const d = g.drops[0];
-    return `${d.title ?? 'Ogłoszenie'} — taniej o ${money(d.old_price - d.new_price, d.currency)}`;
+    return d.target_price != null
+      ? `${d.title ?? 'Ogłoszenie'} — cena spadła do Twojego progu: ${money(d.new_price, d.currency)}`
+      : `${d.title ?? 'Ogłoszenie'} — taniej o ${money(d.old_price - d.new_price, d.currency)}`;
   }
+  if (g.removed.length === 1 && !g.drops.length && !g.hits.length) return `${g.removed[0].title ?? 'Ogłoszenie'} — zniknęło z Otomoto`;
   if (g.drops.length) parts.push(`${g.drops.length} ${plural(g.drops.length, 'obniżka', 'obniżki', 'obniżek')} cen`);
   if (g.hits.length) {
     const s = bySearch(g.hits);
     parts.push(`${g.hits.length} ${plural(g.hits.length, 'nowe ogłoszenie', 'nowe ogłoszenia', 'nowych ogłoszeń')}${s.length === 1 ? ` — ${s[0].name}` : ''}`);
   }
+  if (g.removed.length) parts.push(`${g.removed.length} ${plural(g.removed.length, 'ogłoszenie zniknęło', 'ogłoszenia zniknęły', 'ogłoszeń zniknęło')}`);
   return `Cenomierz: ${parts.join(', ')}`;
 }
 
@@ -106,7 +117,12 @@ function text(g: Digest) {
   const lines: string[] = [];
   if (g.drops.length) {
     lines.push('Obserwowane ogłoszenia, które potaniały:', '');
-    for (const d of g.drops) lines.push(`• ${d.title ?? d.ad_key}: ${money(d.old_price, d.currency)} → ${money(d.new_price, d.currency)} (${pct(d)}%)\n  ${d.url}`);
+    for (const d of g.drops) lines.push(`• ${d.title ?? d.ad_key}: ${money(d.old_price, d.currency)} → ${money(d.new_price, d.currency)} (${pct(d)}%)${d.target_price != null ? ` — osiągnięty próg ${money(d.target_price, d.currency)}` : ''}\n  ${d.url}`);
+    lines.push('');
+  }
+  if (g.removed.length) {
+    lines.push('Zniknęły z Otomoto (prawdopodobnie sprzedane):', '');
+    for (const x of g.removed) lines.push(`• ${x.title ?? x.ad_key}: ostatnia cena ${money(x.last_price, x.currency)}, obserwowane od ${dateS(x.added_at)}`);
     lines.push('');
   }
   for (const s of bySearch(g.hits)) {
@@ -136,7 +152,14 @@ function html(g: Digest) {
         <a href="${esc(d.url)}" style="color:#1c1917;font-weight:600;text-decoration:none">${esc(d.title ?? d.ad_key)}</a><br>
         <span style="color:#78716c;text-decoration:line-through">${money(d.old_price, d.currency)}</span>
         &nbsp;→&nbsp;<b style="color:#15803d">${money(d.new_price, d.currency)}</b>
-        <span style="color:#15803d">&nbsp;▼ ${money(d.old_price - d.new_price, d.currency)} (${pct(d)}%)</span>`)).join('');
+        <span style="color:#15803d">&nbsp;▼ ${money(d.old_price - d.new_price, d.currency)} (${pct(d)}%)</span>
+        ${d.target_price != null ? `<br><span style="font-size:13px;color:#57534e">Osiągnięty Twój próg: ${money(d.target_price, d.currency)}</span>` : ''}`)).join('');
+  }
+  if (g.removed.length) {
+    body += heading('Zniknęły z Otomoto <span style="font-weight:400;color:#78716c">(prawdopodobnie sprzedane)</span>');
+    body += g.removed.map((x) => row(thumb(x.url, x.image), `
+        <span style="color:#1c1917;font-weight:600">${esc(x.title ?? x.ad_key)}</span><br>
+        <span style="color:#57534e;font-size:13px">Ostatnia cena ${money(x.last_price, x.currency)} · obserwowane od ${dateS(x.added_at)}</span>`)).join('');
   }
   for (const s of bySearch(g.hits)) {
     body += heading(`Nowe ogłoszenia — <a href="${esc(s.url)}" style="color:#1c1917">${esc(s.name)}</a>`);

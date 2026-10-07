@@ -907,7 +907,7 @@ const toListing = (w) => {
   return {
     key: w.ad_key, url: a.url, title: a.title, image: a.image, features: a.features ?? [], location: a.location,
     currency: a.currency, specs: a.specs, official: a.official, status: a.status, removedAt: a.removed_at,
-    lastChecked: a.last_checked, lastError: a.last_error, addedAt: w.added_at, wltpManual: w.wltp_manual, marketUrl: a.market_url,
+    lastChecked: a.last_checked, lastError: a.last_error, addedAt: w.added_at, wltpManual: w.wltp_manual, targetPrice: w.target_price == null ? null : Number(w.target_price), marketUrl: a.market_url,
     history: (a.price_points ?? []).map((p) => ({ t: p.t, price: Number(p.price) })).sort((x, y) => x.t.localeCompare(y.t)),
   };
 };
@@ -915,7 +915,7 @@ const toListing = (w) => {
 async function refresh() {
   if (!session) return;
   const [w, m, sr] = await Promise.all([
-    sb.from('watches').select('ad_key, added_at, wltp_manual, ads(*, price_points(t, price))').order('added_at'),
+    sb.from('watches').select('ad_key, added_at, wltp_manual, target_price, ads(*, price_points(t, price))').order('added_at'),
     sb.from('app_meta').select('value').eq('key', 'vca').maybeSingle(),
     sb.from('searches').select('*, search_hits(ad_key, url, title, subtitle, image, price, currency, location, params, first_seen)')
       .eq('search_hits.baseline', false).order('created_at')
@@ -996,7 +996,7 @@ function toggleSel(key) {
 // ---------- usuwanie z możliwością cofnięcia ----------
 async function removeKeys(keys) {
   const titles = Object.fromEntries(state.listings.map((e) => [e.key, e.title]));
-  const { data, error } = await sb.from('watches').delete().in('ad_key', keys).select('ad_key, added_at, wltp_manual');
+  const { data, error } = await sb.from('watches').delete().in('ad_key', keys).select('ad_key, added_at, wltp_manual, target_price');
   if (error) return toast(error.message, true);
   const removed = (data ?? []).map((r) => ({ ...r, title: titles[r.ad_key] }));
   keys.forEach((k) => selected.delete(k)); saveSel();
@@ -1005,7 +1005,7 @@ async function removeKeys(keys) {
   toast(removed.length === 1 ? `Usunięto: ${removed[0].title}` : `Usunięto ${removed.length} ${plural(removed.length, 'ogłoszenie', 'ogłoszenia', 'ogłoszeń')}`, false, {
     label: 'Cofnij',
     run: async () => {
-      const { error: e2 } = await sb.from('watches').insert(removed.map(({ ad_key, added_at, wltp_manual }) => ({ ad_key, added_at, wltp_manual })));
+      const { error: e2 } = await sb.from('watches').insert(removed.map(({ ad_key, added_at, wltp_manual, target_price }) => ({ ad_key, added_at, wltp_manual, target_price })));
       toast(e2 ? 'Nie udało się przywrócić.' : 'Przywrócono.', !!e2);
       refresh();
     },
@@ -1418,11 +1418,16 @@ function computeMarket(e) {
 }
 const mktTone = (pct) => (pct <= -3 ? 'good' : pct >= 3 ? 'bad' : 'neutral');
 const mktLabel = (pct) => (Math.abs(pct) < 3 ? 'cena rynkowa' : `${pctS(pct)} ${pct < 0 ? 'poniżej' : 'powyżej'} rynku`);
+function targetChip(e) {
+  if (e.targetPrice == null) return '';
+  const hit = stats(e).last != null && stats(e).last <= e.targetPrice;
+  return `<span class="pill ${hit ? 'good' : 'neutral'}" title="Mail o obniżce przyjdzie dopiero, gdy cena spadnie do progu">${hit ? 'próg osiągnięty' : 'próg'}: ${compact(e.targetPrice)} ${e.currency === 'PLN' ? 'zł' : esc(e.currency)}</span>`;
+}
 function mktRow(e) {
-  const r = mkt(e);
-  if (!r) return '';
-  return `<div class="mkt-row"><span class="pill ${mktTone(r.pct)}" title="Względem ${r.expected ? 'ceny oczekiwanej przy tym przebiegu' : 'mediany'} ${r.n} podobnych ofert z Otomoto">${mktLabel(r.pct)}</span>
-    <span>vs ${r.n} ${plural(r.n, 'podobna oferta', 'podobne oferty', 'podobnych ofert')}</span></div>`;
+  const r = mkt(e), t = targetChip(e);
+  if (!r && !t) return '';
+  return `<div class="mkt-row">${t}${r ? `<span class="pill ${mktTone(r.pct)}" title="Względem ${r.expected ? 'ceny oczekiwanej przy tym przebiegu' : 'mediany'} ${r.n} podobnych ofert z Otomoto">${mktLabel(r.pct)}</span>
+    <span>vs ${r.n} ${plural(r.n, 'podobna oferta', 'podobne oferty', 'podobnych ofert')}</span>` : ''}</div>`;
 }
 function mktSection(e) {
   const r = e.market, sp = e.specs ?? {};
@@ -1539,6 +1544,7 @@ function openDetail(key) {
       ${stat('Najniższa', money(s.min, e.currency))}${stat('Najwyższa', money(s.max, e.currency))}
       ${stat('Obserwowane od', dateS(e.addedAt))}
     </div>
+    ${targetSection(e, s)}
     ${isEV(e) ? evSection(e) : ''}
     ${mktSection(e)}
     <div class="dlg-section"><h3>Cena w czasie</h3><div class="chart-host lg" id="dlg-chart"></div></div>
@@ -1563,6 +1569,45 @@ $('#dlg').addEventListener('click', async (ev) => {
   removeKeys([del.dataset.del]);
 });
 $('#dlg').addEventListener('close', () => { $('#tip').classList.remove('show'); document.body.append($('#tip')); });
+
+// ---------- próg cenowy ----------
+function targetSection(e, s) {
+  if (s.removed) return '';
+  const cur = e.currency === 'PLN' ? 'zł' : esc(e.currency);
+  return `<div class="dlg-section"><h3>Powiadomienie o cenie</h3>
+    <form class="wltp-form" data-target-form="${esc(e.key)}" style="margin-top:0">
+      <span style="font-size:13.5px;color:var(--text-2)">Wyślij mail o obniżce dopiero, gdy cena spadnie do</span>
+      <input type="number" name="price" min="1" step="100" style="width:120px" placeholder="np. ${fmt(Math.round(s.last * 0.95 / 1000) * 1000)}" value="${e.targetPrice ?? ''}" aria-label="Próg cenowy w ${cur}" required>
+      <span style="font-size:13.5px;color:var(--text-2)">${cur}</span>
+      <button class="btn btn-primary btn-sm">Zapisz</button>
+      ${e.targetPrice != null ? '<button type="button" class="btn btn-ghost btn-sm" data-target-clear>Usuń próg</button>' : ''}
+    </form>
+    <div class="note">${e.targetPrice != null
+      ? `Mail przyjdzie, gdy cena spadnie do ${money(e.targetPrice, e.currency)} lub niżej. Mniejsze obniżki widać tylko w panelu.`
+      : 'Bez progu mail przychodzi przy każdej obniżce.'} O zniknięciu ogłoszenia z Otomoto powiadomimy zawsze.</div></div>`;
+}
+document.addEventListener('submit', (ev) => {
+  const f = ev.target.closest('[data-target-form]');
+  if (!f) return;
+  ev.preventDefault();
+  saveTarget(f.dataset.targetForm, f.price.value);
+});
+document.addEventListener('click', (ev) => {
+  const c = ev.target.closest('[data-target-clear]');
+  if (c) saveTarget(c.closest('form').dataset.targetForm, null);
+});
+async function saveTarget(key, value) {
+  const n = value == null || value === '' ? null : Math.round(Number(value));
+  if (n != null && !(n > 0)) return toast('Próg musi być kwotą większą od zera.', true);
+  const { error } = await sb.from('watches').update({ target_price: n }).eq('ad_key', key);
+  if (error) return toast(error.message, true);
+  const e = state.listings.find((x) => x.key === key);
+  toast(n == null ? 'Usunięto próg — mail przyjdzie przy każdej obniżce.'
+    : stats(e).last <= n ? `Zapisano próg ${money(n, e.currency)} — obecna cena już go spełnia, mail przyjdzie przy kolejnej obniżce.`
+    : `Zapisano próg: ${money(n, e.currency)}`);
+  await refresh();
+  if ($('#dlg').open) openDetail(key);
+}
 
 // ---------- edycja zasięgu WLTP ----------
 document.addEventListener('click', (ev) => {
