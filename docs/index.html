@@ -1392,11 +1392,9 @@ async function loadMarket() {
 }
 const mkt = (e) => (e.market && !e.market.tooFew ? e.market : null);
 const median = (sorted) => sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
-function computeMarket(e) {
-  const sample = e.marketUrl && market.get(e.marketUrl);
-  const s = stats(e), price = s.last;
-  if (!sample || price == null || s.removed) return null;
-  let pool = (sample.hits ?? []).filter((h) => h.k !== e.key && h.p > 0 && h.c === e.currency);
+// Podobne oferty z próbki (bieżącej albo historycznej) — te same zasady dla porównania i trendu.
+function pickComparables(e, hits) {
+  let pool = (hits ?? []).filter((h) => h.k !== e.key && h.p > 0 && h.c === e.currency);
   const pw = e.specs?.power;
   let powerMatched = false;
   if (pw && pool.some((h) => h.pw)) {
@@ -1408,6 +1406,13 @@ function computeMarket(e) {
     const mid = median(pool.map((h) => h.p).sort((a, b) => a - b));
     pool = pool.filter((h) => h.p >= mid / 2 && h.p <= mid * 2);
   }
+  return { pool, powerMatched };
+}
+function computeMarket(e) {
+  const sample = e.marketUrl && market.get(e.marketUrl);
+  const s = stats(e), price = s.last;
+  if (!sample || price == null || s.removed) return null;
+  const { pool, powerMatched } = pickComparables(e, sample.hits);
   const base = { n: pool.length, total: sample.total, fetchedAt: sample.fetched_at, pool, powerMatched, price };
   if (pool.length < MIN_CMP) return { ...base, tooFew: true };
   const prices = pool.map((h) => h.p).sort((a, b) => a - b);
@@ -1445,7 +1450,7 @@ function mktSection(e) {
     r.powerMatched ? `moc zbliżona do ${fmt(sp.power)} KM` : null].filter(Boolean).join(', ');
   const foot = `<div class="note" style="margin-top:8px">Porównanie z ${r.n} ${plural(r.n, 'ofertą', 'ofertami', 'ofertami')} z Otomoto: ${esc(crit)}. Próbka pobrana ${ago(r.fetchedAt)}.
     <a href="${esc(e.marketUrl)}" target="_blank" rel="noopener" style="color:var(--accent)">Wszystkie oferty (${fmt(r.total)})</a></div>`;
-  if (r.tooFew) return `<div class="dlg-section"><h3>Na tle rynku</h3><p class="sub">Za mało podobnych ofert na Otomoto (${r.n}), żeby wiarygodnie porównać cenę.</p>${foot}</div>`;
+  if (r.tooFew) return `<div class="dlg-section"><h3>Na tle rynku</h3><p class="sub">Za mało podobnych ofert na Otomoto (${r.n}), żeby wiarygodnie porównać cenę.</p>${foot}<div id="mkt-trend"></div></div>`;
   const st = (l, v) => `<div class="stat"><div class="stat-label">${l}</div><div class="stat-value num">${v}</div></div>`;
   const rows = [...r.pool, { k: e.key, self: true, t: e.title, u: e.url, p: r.price, y: sp.year, m: sp.mileage, pw: sp.power }]
     .sort((a, b) => a.p - b.p).map((h) => `<tr class="${h.self ? 'self' : ''}"><td><a href="${esc(h.u)}" target="_blank" rel="noopener">${esc(h.self ? 'To ogłoszenie' : h.t)}</a></td>
@@ -1465,7 +1470,8 @@ function mktSection(e) {
     <div class="mkt-chart" id="mkt-chart"></div>
     <details class="mkt-list"><summary>Lista ofert (${r.n + 1})</summary>
       <table><thead><tr><th>Oferta</th><th>Rocznik</th><th>Przebieg</th><th>Moc</th><th>Cena</th></tr></thead><tbody>${rows}</tbody></table></details>
-    ${foot}</div>`;
+    ${foot}
+    <div id="mkt-trend"></div></div>`;
 }
 // Wykres: cena (oś Y) w zależności od przebiegu (oś X); to ogłoszenie wyróżnione kolorem akcentu.
 function drawMarket(host, e) {
@@ -1568,6 +1574,7 @@ function openDetail(key) {
   dlg.showModal();
   drawChart($('#dlg-chart'), e, { axes: true });
   if ($('#mkt-chart')) drawMarket($('#mkt-chart'), e);
+  loadTrend(e);
 }
 
 $('#dlg').addEventListener('click', async (ev) => {
@@ -1579,6 +1586,57 @@ $('#dlg').addEventListener('click', async (ev) => {
   removeKeys([del.dataset.del]);
 });
 $('#dlg').addEventListener('close', () => { $('#tip').classList.remove('show'); document.body.append($('#tip')); });
+
+// ---------- trend cen modelu ----------
+// Mediana podobnych ofert w kolejnych próbkach rynku (market_history, co ok. 3 dni). Wczytywane przy otwarciu
+// szczegółów — tylko dla jednego adresu próbki.
+const TREND_MIN_DAYS = 6;
+async function loadTrend(e) {
+  const host = $('#mkt-trend');
+  if (!host || !e.marketUrl) return;
+  const { data } = await sb.from('market_history').select('t, hits').eq('url', e.marketUrl).order('t');
+  if (host !== $('#mkt-trend')) return;   // w międzyczasie otwarto inne ogłoszenie
+  const pts = (data ?? []).map((h) => {
+    const { pool } = pickComparables(e, h.hits);
+    return pool.length >= MIN_CMP ? { t: Date.parse(h.t), v: median(pool.map((x) => x.p).sort((a, b) => a - b)), n: pool.length } : null;
+  }).filter(Boolean);
+  const span = pts.length ? (pts.at(-1).t - pts[0].t) / 864e5 : 0;
+  const since = data?.length ? dateS(data[0].t) : 'dziś';
+  if (pts.length < 2 || span < TREND_MIN_DAYS) {
+    host.innerHTML = `<div class="note" style="margin-top:10px">${icon('chart')}Trend cen modelu: zbieramy pomiary co ok. 3 dni (od ${since}) — wykres pojawi się po tygodniu.</div>`;
+    return;
+  }
+  const first = pts[0], last = pts.at(-1), ch = (last.v - first.v) / first.v * 100;
+  host.innerHTML = `<div class="mkt-legend" style="margin-top:16px"><b style="color:var(--text)">Trend: mediana podobnych ofert</b>
+      <span class="num">${money(first.v, e.currency)} → ${money(last.v, e.currency)}</span>
+      <span class="pill ${ch <= -1 ? 'good' : ch >= 1 ? 'bad' : 'neutral'}">${pctS(ch)} w ${Math.round(span)} dni</span></div>
+    <div class="mkt-chart" style="height:170px" id="trend-chart"></div>`;
+  drawTrend($('#trend-chart'), pts, e.currency);
+}
+function drawTrend(host, pts, currency) {
+  const W = host.clientWidth, H = 170, pad = { l: 64, r: 16, t: 12, b: 28 };
+  const t0 = pts[0].t, t1 = pts.at(-1).t;
+  let [ylo, yhi] = padRange(Math.min(...pts.map((p) => p.v)), Math.max(...pts.map((p) => p.v)), 0.25);
+  ylo = Math.max(0, ylo);
+  const x = (t) => pad.l + (t - t0) / (t1 - t0) * (W - pad.l - pad.r);
+  const y = (v) => pad.t + (yhi - v) / (yhi - ylo) * (H - pad.t - pad.b);
+  let grid = '';
+  for (let i = 0; i <= 2; i++) {
+    const v = ylo + (yhi - ylo) * i / 2;
+    grid += `<line class="grid-line" x1="${pad.l}" x2="${W - pad.r}" y1="${y(v)}" y2="${y(v)}"/><text x="${pad.l - 10}" y="${y(v) + 4}" text-anchor="end">${compact(v)}</text>`;
+  }
+  grid += `<text x="${pad.l}" y="${H - 6}">${dateS(new Date(t0).toISOString())}</text><text x="${W - pad.r}" y="${H - 6}" text-anchor="end">${dateS(new Date(t1).toISOString())}</text>`;
+  const dots = pts.map((p) => ({ p, cx: x(p.t), cy: y(p.v), r: 4 }));
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Mediana cen podobnych ofert w czasie">
+    ${grid}
+    <polyline points="${dots.map((d) => `${d.cx},${d.cy}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+    ${dots.map((d) => `<circle class="pt" cx="${d.cx}" cy="${d.cy}" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>`).join('')}
+  </svg>`;
+  attachNearest(host, dots, (d) => [
+    el('span', 'v num', money(d.p.v, currency)),
+    el('span', 'd', `${new Date(d.p.t).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })} · ${d.p.n} ${plural(d.p.n, 'oferta', 'oferty', 'ofert')}`),
+  ], () => {});
+}
 
 // ---------- negocjacje ----------
 // Orientacyjna pozycja negocjacyjna z trzech sygnałów: jak długo ogłoszenie wisi (pierwotna data wystawienia

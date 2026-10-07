@@ -1,7 +1,8 @@
 // Próbki rynku do porównania cen (pg_cron co godzinę, bez logowania).
 // Dla obserwowanych ogłoszeń pobiera z Otomoto do 64 najnowszych podobnych ofert (ta sama marka, model i paliwo,
 // rocznik ±1) — jedna próbka na adres wyszukiwania, odświeżana co 3 dni. Ogłoszenia zapisane przed dodaniem
-// tej funkcji (bez identyfikatorów marki/modelu w specs) są najpierw ponownie pobierane.
+// tej funkcji (bez identyfikatorów marki/modelu w specs) są najpierw ponownie pobierane. Każda pobrana próbka
+// trafia też do market_history (trend cen modelu).
 // Wywołanie jest bezpieczne do powtarzania: gdy wszystko jest aktualne, kończy się od razu.
 import { admin, json, refreshAd, sleep, vcaTable } from '../_shared/db.ts';
 import { fetchSearchPage, marketUrl } from '../_shared/otomoto.ts';
@@ -68,8 +69,12 @@ Deno.serve(async (req) => {
       if (page * 32 >= total) break;
     }
     if (!ok) { failed++; continue; }
-    const { error: e2 } = await db.from('market_samples').upsert({ url, fetched_at: new Date().toISOString(), total, hits });
-    if (e2) failed++; else fetched++;
+    const now = new Date().toISOString();
+    const { error: e2 } = await db.from('market_samples').upsert({ url, fetched_at: now, total, hits });
+    if (e2) { failed++; continue; }
+    fetched++;
+    // kopia do historii (trend cen modelu)
+    await db.from('market_history').insert({ url, t: now, total, hits: hits.map(({ p, c, pw, m }) => ({ p, c, pw, m })) });
   }
   return json({ ads: ads.size, backfilled, samples: urls.length, fetched, failed, remaining: due.length - fetched - failed });
 });
