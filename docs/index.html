@@ -358,6 +358,14 @@
   .mkt-list tr.self td { font-weight: 700; background: var(--accent-soft); }
   @media (max-width: 640px) { .mkt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .mkt-grid .stat:nth-child(3) { border-left: 0; } .mkt-grid .stat:nth-child(n+3) { border-top: 1px solid var(--border); } }
 
+  /* ---------- koszty jazdy ---------- */
+  .cost-form { display: grid; grid-template-columns: 1fr auto; gap: 10px 14px; align-items: center; margin: 14px 0 6px; }
+  .cost-form label { font-size: 13.5px; color: var(--text-2); }
+  .cost-form label small { display: block; color: var(--text-3); font-size: 12px; }
+  .cost-form .in { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-3); }
+  .cost-form input { width: 96px; height: 34px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); text-align: right; }
+  .cost-form input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+
   /* ---------- negocjacje ---------- */
   .nego { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; align-items: start; }
   .nego ul { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13.5px; line-height: 1.55; }
@@ -475,6 +483,7 @@
       <div class="user-menu" id="user-menu" role="menu" hidden>
         <div class="who" id="user-who"></div>
         <button id="alerts-btn" class="switch" role="menuitemcheckbox" aria-checked="true"><span style="display:flex;align-items:center;gap:8px"><svg class="i"><use href="#i-alert"/></svg>Powiadomienia e-mail o obniżkach</span><span class="tgl" aria-hidden="true"></span></button>
+        <button id="cost-btn" role="menuitem"><svg class="i"><use href="#i-bolt"/></svg>Koszty jazdy elektrykiem</button>
         <button id="share-btn" role="menuitem"><svg class="i"><use href="#i-link"/></svg>Udostępnij Cenomierza</button>
         <button id="logout-btn" role="menuitem"><svg class="i"><use href="#i-x"/></svg>Wyloguj</button>
       </div>
@@ -558,6 +567,7 @@
       <option value="batt-desc">Bateria: od największej</option>
       <option value="market">Najtańsze względem rynku</option>
       <option value="listed">Najdłużej na Otomoto</option>
+      <option value="cost">Najtańsze w jeździe (prąd)</option>
       <option value="added">Ostatnio dodane</option>
     </select>
   </div>
@@ -663,7 +673,7 @@ const plural = (n, one, few, many) => n === 1 ? one : (n % 10 >= 2 && n % 10 <= 
 $('#bookmarklet').href = `javascript:(()=>{const s=new Set([...document.querySelectorAll('a[href*="/oferta/"]')].map(a=>a.href.split(/[?#]/)[0]).filter(h=>/-ID[A-Za-z0-9]+\\.html$/.test(h)));if(!s.size){alert('Nie znaleziono ogłoszeń na tej stronie');return}window.open('${location.origin}${location.pathname}#import='+encodeURIComponent([...s].join(' ')))})()`;
 $('#bookmarklet').addEventListener('click', (e) => { e.preventDefault(); toast('Przeciągnij ten przycisk na pasek zakładek, zamiast go klikać.'); });
 
-let state = { listings: [], searches: [], checking: false, importing: 0 };
+let state = { listings: [], searches: [], settings: {}, checking: false, importing: 0 };
 let view = { seg: 'all', q: '', sort: 'change', tab: 'list', groupBy: 'make', scatterX: 'mileage' };
 let pollTimer, wasBusy = false;
 
@@ -822,6 +832,7 @@ function evChips(e) {
   return `<div class="evchips">
     ${w.value ? `<span class="evchip ${(w.source === 'official' && w.official.exact) || w.source === 'manual' ? 'ok' : ''}" title="${esc(tip)}">${icon('bolt')}${fmt(w.value)} km WLTP${w.source === 'official' && w.official.exact ? ' ✓' : ''}${w.warn ? ' ⚠' : ''}</span>` : ''}
     ${b ? `<span class="evchip">${b.toLocaleString('pl-PL')} kWh</span>` : ''}
+    ${costOf(e) ? `<span class="evchip" title="Koszt prądu na 100 km wg Twoich ustawień (menu konta → Koszty jazdy)">≈ ${fmt(costOf(e).per100)} zł/100 km</span>` : ''}
   </div>`;
 }
 
@@ -874,6 +885,7 @@ function filtered() {
     'batt-desc': (a, b) => descNullsLast(battOf(a), battOf(b)),
     market: (a, b) => ascNullsLast(mkt(a)?.pct, mkt(b)?.pct),
     listed: (a, b) => descNullsLast(daysListed(a), daysListed(b)),
+    cost: (a, b) => ascNullsLast(costOf(a)?.per100, costOf(b)?.per100),
   }[view.sort];
   return items.sort((a, b) => (a.status === 'REMOVED') - (b.status === 'REMOVED') || by(a, b));
 }
@@ -932,6 +944,11 @@ async function refresh() {
   ]);
   if (w.error) { toast(`Nie udało się wczytać danych: ${w.error.message}`, true); return; }
   if (!sr.error) state.searches = sr.data ?? [];
+  if (!state.settingsLoaded) {
+    const { data } = await sb.from('user_settings').select('data').maybeSingle();
+    state.settings = data?.data ?? {};
+    state.settingsLoaded = true;
+  }
   state.listings = (w.data ?? []).filter((x) => x.ads).map(toListing).filter((e) => e.history.length);
   state.vca = m.data?.value ?? null;
   await loadMarket();
@@ -1085,6 +1102,8 @@ const EV_ROWS = [
   ['Realny zasięg latem · miasto / trasa', (e) => e.specs?.ev?.summerHighway, 'max', (v, e) => kmPair(e.specs?.ev?.summerCity, v)],
   ['Realny zasięg zimą · miasto / trasa', (e) => e.specs?.ev?.winterHighway, 'max', (v, e) => kmPair(e.specs?.ev?.winterCity, v)],
   ['Ładowanie DC 10→80%', (e) => e.specs?.ev?.dcMinutes, 'min', (v) => v == null ? '—' : `ok. ${v} min`],
+  ['Koszt prądu na 100 km', (e) => costOf(e)?.per100, 'min', (v) => v == null ? '—' : `${v.toLocaleString('pl-PL', { maximumFractionDigits: 1 })} zł`],
+  ['Koszt prądu w roku', (e) => costOf(e)?.year, 'min', (v) => v == null ? '—' : `${fmt(v)} zł (${fmt(costSettings().kmYear)} km)`],
   ['Ładowanie AC 0→100%', (e) => e.specs?.ev?.acMinutes, 'min', (v, e) => v == null ? '—' : `ok. ${Math.floor(v / 60)} h ${v % 60} min (${e.specs.ev.acKw} kW)`],
   ['Kondycja baterii', (e) => e.specs?.ev?.healthPct, 'max', (v) => v == null ? '—' : `${v}%`],
   ['__group', 'Pozostałe parametry'],
@@ -1526,7 +1545,8 @@ function evSection(e) {
     ${st('Zima · miasto / trasa', kmPair(v.winterCity, v.winterHighway))}
     ${st('DC 10→80%', v.dcMinutes != null ? `ok. ${v.dcMinutes} <small>min</small>` : '—')}
     ${st('AC 0→100%', v.acMinutes != null ? `ok. ${Math.floor(v.acMinutes / 60)} h ${v.acMinutes % 60} <small>min</small>` : '—')}
-  </div><div class="note" style="margin-top:8px">Realny zasięg, czasy ładowania i kondycja baterii to szacunki Otomoto (lato 25°C, zima 0°C; miasto 50 km/h, trasa 130 km/h).</div></div>`;
+  </div><div class="note" style="margin-top:8px">Realny zasięg, czasy ładowania i kondycja baterii to szacunki Otomoto (lato 25°C, zima 0°C; miasto 50 km/h, trasa 130 km/h).</div>
+  ${costHtml(e)}</div>`;
 }
 
 function openDetail(key) {
@@ -1637,6 +1657,82 @@ function drawTrend(host, pts, currency) {
     el('span', 'd', `${new Date(d.p.t).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })} · ${d.p.n} ${plural(d.p.n, 'oferta', 'oferty', 'ofert')}`),
   ], () => {});
 }
+
+// ---------- koszty jazdy elektrykiem ----------
+// Zużycie: z ogłoszenia lub oficjalne (VCA), a gdy go brak — bateria / zasięg WLTP. WLTP jest optymistyczne,
+// więc doliczamy narzut na realne warunki. Straty ładowania: AC w domu 10%, DC na ładowarkach 5%.
+const COST_DEFAULTS = { kmYear: 15000, home: 1.1, public: 2.4, homeShare: 80, real: 20 };
+const costSettings = () => ({ ...COST_DEFAULTS, ...(state.settings.cost ?? {}) });
+function costOf(e) {
+  if (!isEV(e)) return null;
+  let cons = consOf(e), src = 'zużycie wg WLTP';
+  if (!cons) {
+    const b = battOf(e), w = wltpInfo(e).value;
+    if (!b || !w) return null;
+    cons = b / w * 100; src = 'bateria ÷ zasięg WLTP';
+  }
+  const c = costSettings(), share = c.homeShare / 100;
+  const realCons = cons * (1 + c.real / 100);
+  const perKwh = share * c.home * 1.1 + (1 - share) * c.public * 1.05;
+  return { cons, realCons, src, per100: realCons * perKwh, year: realCons * perKwh * c.kmYear / 100, month: realCons * perKwh * c.kmYear / 1200 };
+}
+function costHtml(e) {
+  const k = costOf(e);
+  if (!k) return '';
+  const c = costSettings();
+  return `<div class="mkt-grid" style="margin-top:14px">
+      <div class="stat"><div class="stat-label">Prąd na 100 km</div><div class="stat-value num">${k.per100.toLocaleString('pl-PL', { maximumFractionDigits: 1 })} <small>zł</small></div></div>
+      <div class="stat"><div class="stat-label">Miesięcznie</div><div class="stat-value num">${fmt(k.month)} <small>zł</small></div></div>
+      <div class="stat"><div class="stat-label">Rocznie</div><div class="stat-value num">${fmt(k.year)} <small>zł</small></div></div>
+      <div class="stat"><div class="stat-label">Realne zużycie</div><div class="stat-value num">${k.realCons.toLocaleString('pl-PL', { maximumFractionDigits: 1 })} <small>kWh/100 km</small></div></div>
+    </div>
+    <div class="note" style="margin-top:8px">Przy ${fmt(c.kmYear)} km/rok, ${c.homeShare}% ładowania w domu (${c.home.toLocaleString('pl-PL')} zł/kWh) i reszcie na ładowarkach (${c.public.toLocaleString('pl-PL')} zł/kWh); ${k.src} + ${c.real}% na realne warunki.
+      <button class="link-btn" data-cost-settings>${icon('edit')}zmień założenia</button></div>`;
+}
+function openCostSettings() {
+  const c = costSettings(), dlg = $('#dlg');
+  const row = (name, label, hint, unit, step, min, max) => `<label for="cost-${name}">${label}${hint ? `<small>${hint}</small>` : ''}</label>
+    <span class="in"><input id="cost-${name}" name="${name}" type="number" step="${step}" min="${min}" max="${max}" value="${c[name]}" required>${unit}</span>`;
+  dlg.innerHTML = `
+    <button class="btn btn-ghost btn-sm close" data-close aria-label="Zamknij">${icon('x')}</button>
+    <div style="padding:22px 24px">
+      <h2 id="dlg-title" style="margin:0 0 4px">Koszty jazdy elektrykiem</h2>
+      <p class="sub">Założenia do wyliczeń kosztu prądu. Zapisują się na Twoim koncie.</p>
+      <form class="cost-form" id="cost-form">
+        ${row('kmYear', 'Roczny przebieg', '', 'km', 500, 1000, 100000)}
+        ${row('home', 'Cena prądu w domu', 'z dystrybucją, brutto', 'zł/kWh', 0.01, 0, 10)}
+        ${row('public', 'Cena na szybkich ładowarkach', 'DC, średnio', 'zł/kWh', 0.01, 0, 10)}
+        ${row('homeShare', 'Ładowanie w domu', 'reszta na ładowarkach', '%', 5, 0, 100)}
+        ${row('real', 'Dopłata za realne warunki', 'WLTP jest optymistyczne; zimą więcej', '%', 5, 0, 100)}
+        <div style="grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+          <button type="button" class="btn btn-ghost btn-sm" data-cost-reset>Przywróć domyślne</button>
+          <button class="btn btn-primary btn-sm">Zapisz</button>
+        </div>
+      </form>
+    </div>`;
+  if (!dlg.open) dlg.showModal();
+}
+async function saveCost(cost) {
+  state.settings = { ...state.settings, cost };
+  const { error } = await sb.from('user_settings').upsert({ user_id: session.user.id, data: state.settings, updated_at: new Date().toISOString() });
+  if (error) return toast('Nie udało się zapisać ustawień: ' + error.message, true);
+  $('#dlg').close();
+  toast('Zapisano założenia kosztów jazdy.');
+  render();
+}
+$('#cost-btn').addEventListener('click', () => { $('#user-menu').hidden = true; openCostSettings(); });
+document.addEventListener('click', (ev) => {
+  if (ev.target.closest('[data-cost-settings]')) openCostSettings();
+  if (ev.target.closest('[data-cost-reset]')) saveCost(null);
+});
+document.addEventListener('submit', (ev) => {
+  const f = ev.target.closest('#cost-form');
+  if (!f) return;
+  ev.preventDefault();
+  const v = Object.fromEntries([...new FormData(f)].map(([k, x]) => [k, Number(x)]));
+  if (Object.values(v).some((x) => !Number.isFinite(x) || x < 0)) return toast('Wpisz poprawne liczby.', true);
+  saveCost(v);
+});
 
 // ---------- negocjacje ----------
 // Orientacyjna pozycja negocjacyjna z trzech sygnałów: jak długo ogłoszenie wisi (pierwotna data wystawienia
@@ -2108,7 +2204,7 @@ function showApp(s) {
   $('#app').hidden = !on;
   $('#add').hidden = !on;
   $('#user').hidden = !on;
-  if (!on) { state = { listings: [], searches: [] }; setAuthMode('login'); return; }
+  if (!on) { state = { listings: [], searches: [], settings: {} }; setAuthMode('login'); return; }
   const email = s.user.email ?? '';
   $('#user-email').textContent = email;
   $('#user-who').textContent = `Zalogowano jako ${email}`;
