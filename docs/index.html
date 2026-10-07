@@ -358,6 +358,13 @@
   .mkt-list tr.self td { font-weight: 700; background: var(--accent-soft); }
   @media (max-width: 640px) { .mkt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .mkt-grid .stat:nth-child(3) { border-left: 0; } .mkt-grid .stat:nth-child(n+3) { border-top: 1px solid var(--border); } }
 
+  /* ---------- podgląd udostępnionego porównania ---------- */
+  .share-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin: 18px 0 0; font-size: 13.5px; }
+  .share-banner a { font-weight: 600; color: var(--accent); }
+  body.shared #add, body.shared #user, body.shared #check, body.shared .selbar, body.shared .card-actions,
+  body.shared [data-tab="searches"], body.shared [data-del], body.shared [data-sel], body.shared [data-wltp-slot],
+  body.shared .dlg-section:has([data-target-form]), body.shared [data-cost-settings], body.shared .panel { display: none !important; }
+
   /* ---------- koszty jazdy ---------- */
   .cost-form { display: grid; grid-template-columns: 1fr auto; gap: 10px 14px; align-items: center; margin: 14px 0 6px; }
   .cost-form label { font-size: 13.5px; color: var(--text-2); }
@@ -511,6 +518,7 @@
 </section>
 
 <main id="app" hidden>
+  <div class="share-banner" id="share-banner" hidden></div>
   <section class="hero">
     <div class="hero-text">
       <span class="eyebrow"><svg class="i" style="width:13px;height:13px"><use href="#i-chart"/></svg>Monitoring cen</span>
@@ -641,6 +649,7 @@
 <div class="selbar" id="selbar" hidden>
   <b id="sel-text"></b>
   <button class="btn btn-primary" id="sel-compare">Porównaj</button>
+  <button class="btn" id="sel-share"><svg class="i"><use href="#i-link"/></svg>Udostępnij</button>
   <button class="btn btn-danger" id="sel-delete"><svg class="i"><use href="#i-trash"/></svg>Usuń</button>
   <button class="btn" id="sel-clear" aria-label="Wyczyść zaznaczenie"><svg class="i"><use href="#i-x"/></svg></button>
 </div>
@@ -650,6 +659,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const SUPABASE_URL = 'https://kkduvothshtywldnuspe.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrZHV2b3Roc2h0eXdsZG51c3BlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzMDg2MjQsImV4cCI6MjEwNjg4NDYyNH0.e-LtxLvYl9jQQftqAVDKSUw_As6YF8tzV03YF9b3RV8'; // klucz publiczny — dostęp do danych ograniczają reguły RLS w bazie
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// ?p=<id> — podgląd udostępnionego porównania (bez logowania)
+const shareId = new URLSearchParams(location.search).get('p');
 let session = null;
 
 const icon = (id, cls = '') => `<svg class="i ${cls}"><use href="#i-${id}"/></svg>`;
@@ -990,7 +1001,7 @@ const MAX_CMP = 4;
 // ---------- zaznaczanie ----------
 let selected = new Set();
 try { selected = new Set(JSON.parse(localStorage.getItem('cenomierz.selected') || '[]')); } catch {}
-const saveSel = () => { try { localStorage.setItem('cenomierz.selected', JSON.stringify([...selected])); } catch {} };
+const saveSel = () => { if (shareId) return; try { localStorage.setItem('cenomierz.selected', JSON.stringify([...selected])); } catch {} };
 
 function renderSel() {
   const keys = new Set(state.listings.map((e) => e.key));
@@ -1613,7 +1624,7 @@ $('#dlg').addEventListener('close', () => { $('#tip').classList.remove('show'); 
 const TREND_MIN_DAYS = 6;
 async function loadTrend(e) {
   const host = $('#mkt-trend');
-  if (!host || !e.marketUrl) return;
+  if (!host || !e.marketUrl || shareId) return;
   const { data } = await sb.from('market_history').select('t, hits').eq('url', e.marketUrl).order('t');
   if (host !== $('#mkt-trend')) return;   // w międzyczasie otwarto inne ogłoszenie
   const pts = (data ?? []).map((h) => {
@@ -2215,6 +2226,7 @@ function showApp(s) {
   }
 }
 sb.auth.onAuthStateChange((ev, s) => {
+  if (shareId) return;
   // link „ustaw nowe hasło” z maila loguje użytkownika — najpierw pokazujemy formularz nowego hasła
   if (ev === 'PASSWORD_RECOVERY') { showApp(null); setAuthMode('newpass'); $('#auth-pass').focus(); return; }
   if (authMode === 'newpass') { if (ev === 'SIGNED_OUT') setAuthMode('login'); return; }
@@ -2222,10 +2234,50 @@ sb.auth.onAuthStateChange((ev, s) => {
 });
 
 let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => (view.tab === 'compare' ? renderCompare() : view.tab === 'searches' ? renderSearches() : renderGrid()), 150); });
-setInterval(() => { if (!state.checking && !state.importing) refresh(); }, 5 * 60_000);
+// ---------- udostępnianie porównania ----------
+$('#sel-share').addEventListener('click', async () => {
+  const keys = [...selected].slice(0, 12);
+  if (!keys.length) return;
+  const { data, error } = await sb.from('shares').insert({ ad_keys: keys }).select('id').single();
+  if (error) return toast('Nie udało się utworzyć linku: ' + error.message, true);
+  const url = `${location.origin}${location.pathname}?p=${data.id}`;
+  const msg = `Link do ${keys.length} ${plural(keys.length, 'ogłoszenia', 'ogłoszeń', 'ogłoszeń')} — tylko do podglądu, ważny 90 dni.`;
+  try {
+    if (navigator.share) await navigator.share({ title: 'Cenomierz — porównanie ogłoszeń', url });
+    else { await navigator.clipboard.writeText(url); toast(`Skopiowano. ${msg}`); }
+  } catch { toast(`${msg} ${url}`); }
+});
+async function loadShare(id) {
+  document.body.classList.add('shared');
+  $('#auth').hidden = true; $('#app').hidden = false;
+  $('#sub').textContent = 'Wczytuję udostępnione porównanie…';
+  let r;
+  try { r = await callFn('share', { id }); } catch (e) {
+    $('#sub').textContent = e.message;
+    $('#share-banner').hidden = false;
+    $('#share-banner').innerHTML = `<span>${esc(e.message)}</span><a href="${location.pathname}">Przejdź do Cenomierza</a>`;
+    return;
+  }
+  const order = new Map(r.order.map((k, i) => [k, i]));
+  state.listings = r.watches.filter((x) => x.ads).map(toListing).filter((e) => e.history.length)
+    .sort((a, b) => order.get(a.key) - order.get(b.key));
+  state.vca = r.vca;
+  market.clear();
+  r.samples.forEach((m) => market.set(m.url, m));
+  state.listings.forEach((e) => { e.market = computeMarket(e); });
+  selected = new Set(state.listings.slice(0, MAX_CMP).map((e) => e.key));
+  $('#share-banner').hidden = false;
+  $('#share-banner').innerHTML = `<span>${icon('link')} Porównanie udostępnione z Cenomierza · ${dateS(r.createdAt)} · tylko do podglądu</span>
+    <a href="${location.pathname}">Śledź własne ogłoszenia — załóż konto</a>`;
+  render();
+  if (state.listings.length >= 2) setTab('compare');
+}
+
+setInterval(() => { if (!shareId && !state.checking && !state.importing) refresh(); }, 5 * 60_000);
 captureImportHash();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-sb.auth.getSession().then(({ data }) => { if (!data.session) showApp(null); });
+if (shareId) loadShare(shareId);
+else sb.auth.getSession().then(({ data }) => { if (!data.session) showApp(null); });
 </script>
 </body>
 </html>

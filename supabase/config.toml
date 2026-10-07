@@ -439,3 +439,6 @@ verify_jwt = false
 
 [functions.market]
 verify_jwt = false
+
+[functions.share]
+verify_jwt = false
