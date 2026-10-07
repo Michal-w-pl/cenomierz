@@ -438,6 +438,8 @@
       <option value="recent">Ostatnia zmiana ceny</option>
       <option value="price-asc">Cena: od najniższej</option>
       <option value="price-desc">Cena: od najwyższej</option>
+      <option value="wltp-desc">Zasięg WLTP: od największego</option>
+      <option value="batt-desc">Bateria: od największej</option>
       <option value="added">Ostatnio dodane</option>
     </select>
   </div>
@@ -720,6 +722,9 @@ function card(e) {
   </article>`;
 }
 
+// Malejąco; ogłoszenia bez wartości (np. spalinowe) na końcu.
+const descNullsLast = (x, y) => (x == null) - (y == null) || (x == null ? 0 : y - x);
+
 function filtered() {
   const f = SEGS.find(([k]) => k === view.seg)[2];
   const q = view.q.trim().toLowerCase();
@@ -730,6 +735,8 @@ function filtered() {
     'price-asc': (a, b) => (stats(a).last ?? Infinity) - (stats(b).last ?? Infinity),
     'price-desc': (a, b) => (stats(b).last ?? -Infinity) - (stats(a).last ?? -Infinity),
     added: (a, b) => b.addedAt.localeCompare(a.addedAt),
+    'wltp-desc': (a, b) => descNullsLast(wltpInfo(a).value, wltpInfo(b).value),
+    'batt-desc': (a, b) => descNullsLast(battOf(a), battOf(b)),
   }[view.sort];
   return items.sort((a, b) => (a.status === 'REMOVED') - (b.status === 'REMOVED') || by(a, b));
 }
