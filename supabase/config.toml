@@ -433,3 +433,6 @@ verify_jwt = false
 
 [functions.alerts]
 verify_jwt = false
+
+[functions.searches]
+verify_jwt = false

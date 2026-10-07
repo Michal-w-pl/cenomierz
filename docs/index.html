@@ -339,6 +339,29 @@
   .user-menu button:hover { background: var(--surface-2); }
   @media (max-width: 640px) { .user-btn .email { display: none; } .user { position: absolute; right: 16px; top: 10px; } }
 
+  /* ---------- wyszukiwania ---------- */
+  .search-add { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 8px; }
+  .search-add input { height: 40px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); outline: none; min-width: 0; }
+  .search-add input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .srch { margin-top: 22px; }
+  .srch-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .srch-head h2 { font-size: 17px; margin: 0; }
+  .srch-head .meta a { color: var(--accent); }
+  .srch-actions { display: flex; gap: 6px; flex: none; }
+  .srch-actions .icon-btn { box-shadow: none; height: 32px; width: 32px; }
+  .srch-actions .armed { color: var(--bad); border-color: var(--bad); width: auto; padding: 0 10px; font-size: 13px; font-weight: 600; }
+  .srch-empty { background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 16px 18px; color: var(--text-2); font-size: 13.5px; }
+  .hits { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .hit { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); display: flex; gap: 12px; padding: 12px; position: relative; }
+  .hit.new { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .hit .thumb { width: 96px; height: 72px; }
+  .hit-title { font-weight: 600; font-size: 14px; line-height: 1.35; color: inherit; text-decoration: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .hit-title:hover { text-decoration: underline; }
+  .hit-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .hit-foot .price { font-size: 17px; }
+  .hit .new-tag { position: absolute; top: -8px; left: 12px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; padding: 1px 7px; border-radius: 999px; }
+  @media (max-width: 640px) { .search-add { grid-template-columns: 1fr; } .hits { grid-template-columns: 1fr; } }
+
   /* ---------- toast ---------- */
   .toasts { position: fixed; bottom: 20px; right: 20px; z-index: 60; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
   .toast { background: #1c1c1b; color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: var(--shadow-lg); font-size: 13.5px; display: flex; align-items: center; gap: 10px; max-width: 420px; animation: tin .2s ease-out; }
@@ -489,6 +512,7 @@
   <nav class="tabs" role="tablist" id="tabs">
     <button role="tab" data-tab="list" aria-selected="true">Ogłoszenia</button>
     <button role="tab" data-tab="compare" aria-selected="false">Porównanie <span class="badge num" id="sel-badge" hidden></span></button>
+    <button role="tab" data-tab="searches" aria-selected="false">Wyszukiwania <span class="badge num" id="new-badge" hidden></span></button>
   </nav>
 
   <div id="view-list">
@@ -514,6 +538,16 @@
   </div>
 
   <div id="view-compare" hidden></div>
+
+  <div id="view-searches" hidden>
+    <form class="search-add" id="search-add" novalidate>
+      <input type="url" name="url" placeholder="Wklej link do wyników wyszukiwania z otomoto.pl…" aria-label="Link do wyników wyszukiwania" required>
+      <input type="text" name="label" maxlength="80" placeholder="Nazwa, np. EV3 do 150 tys." aria-label="Nazwa wyszukiwania">
+      <button class="btn btn-primary" id="search-add-btn">Śledź wyszukiwanie</button>
+    </form>
+    <p class="note">Ustaw filtry na otomoto.pl, skopiuj adres strony z wynikami i wklej go tutaj. Nowe ogłoszenia sprawdzamy co ok. 4 godziny i dopisujemy do porannego maila.</p>
+    <div id="srch-list"></div>
+  </div>
 
   <section class="panel">
     <svg class="art import-art" viewBox="0 0 300 130" aria-hidden="true">
@@ -601,7 +635,7 @@ const plural = (n, one, few, many) => n === 1 ? one : (n % 10 >= 2 && n % 10 <= 
 $('#bookmarklet').href = `javascript:(()=>{const s=new Set([...document.querySelectorAll('a[href*="/oferta/"]')].map(a=>a.href.split(/[?#]/)[0]).filter(h=>/-ID[A-Za-z0-9]+\\.html$/.test(h)));if(!s.size){alert('Nie znaleziono ogłoszeń na tej stronie');return}window.open('${location.origin}${location.pathname}#import='+encodeURIComponent([...s].join(' ')))})()`;
 $('#bookmarklet').addEventListener('click', (e) => { e.preventDefault(); toast('Przeciągnij ten przycisk na pasek zakładek, zamiast go klikać.'); });
 
-let state = { listings: [], checking: false, importing: 0 };
+let state = { listings: [], searches: [], checking: false, importing: 0 };
 let view = { seg: 'all', q: '', sort: 'change', tab: 'list', groupBy: 'make', scatterX: 'mileage' };
 let pollTimer, wasBusy = false;
 
@@ -815,7 +849,6 @@ function filtered() {
 function renderGrid() {
   const items = filtered();
   const grid = $('#grid');
-  $('#tabs').hidden = !state.listings.length;
   if (!state.listings.length) {
     $('#toolbar').hidden = true;
     grid.style.display = 'block';
@@ -839,9 +872,10 @@ function render() {
   const btn = $('#check');
   btn.disabled = !!state.checking || !n;
   btn.innerHTML = state.checking ? `${icon('refresh', 'spin')}<span>${typeof state.checking === 'string' ? state.checking : 'Sprawdzam…'}</span>` : `${icon('refresh')}<span>Sprawdź ceny</span>`;
-  if (!n && view.tab !== 'list') setTab('list');
+  if (!n && view.tab === 'compare') setTab('list');
   renderKpis(); renderSel(); renderSeg();
-  if (view.tab === 'compare') renderCompare(); else renderGrid();
+  renderNewBadge();
+  if (view.tab === 'compare') renderCompare(); else if (view.tab === 'searches') renderSearches(); else renderGrid();
 }
 
 // Wiersz obserwacji + ogłoszenie + historia cen → kształt używany przez panel.
@@ -857,11 +891,15 @@ const toListing = (w) => {
 
 async function refresh() {
   if (!session) return;
-  const [w, m] = await Promise.all([
+  const [w, m, sr] = await Promise.all([
     sb.from('watches').select('ad_key, added_at, wltp_manual, ads(*, price_points(t, price))').order('added_at'),
     sb.from('app_meta').select('value').eq('key', 'vca').maybeSingle(),
+    sb.from('searches').select('*, search_hits(ad_key, url, title, subtitle, image, price, currency, location, params, first_seen)')
+      .eq('search_hits.baseline', false).order('created_at')
+      .order('first_seen', { referencedTable: 'search_hits', ascending: false }).limit(60, { referencedTable: 'search_hits' }),
   ]);
   if (w.error) { toast(`Nie udało się wczytać danych: ${w.error.message}`, true); return; }
+  if (!sr.error) state.searches = sr.data ?? [];
   state.listings = (w.data ?? []).filter((x) => x.ads).map(toListing).filter((e) => e.history.length);
   state.vca = m.data?.value ?? null;
   render();
@@ -956,8 +994,9 @@ function setTab(t) {
   $('#tabs').querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === t));
   $('#view-list').hidden = t !== 'list';
   $('#view-compare').hidden = t !== 'compare';
+  $('#view-searches').hidden = t !== 'searches';
   hideTip();
-  if (t === 'compare') renderCompare(); else renderGrid();
+  if (t === 'searches') { markSearchesSeen(); renderSearches(); } else if (t === 'compare') renderCompare(); else renderGrid();
 }
 
 // ---------- porównanie ----------
@@ -1435,13 +1474,159 @@ $('#add').addEventListener('submit', async (ev) => {
   const btn = $('#add-btn');
   btn.disabled = true; btn.innerHTML = `${icon('refresh', 'spin')}Pobieram…`;
   try {
-    const r = await addUrls([ev.target.url.value]);
-    if (r.failed.length) throw new Error(r.failed[0].error);
-    toast(r.skipped.length ? 'To ogłoszenie już jest obserwowane.' : `Dodano: ${r.added[0]?.title}`);
-    ev.target.reset();
-    await refresh();
+    const searchUrl = !/\/oferta\//.test(ev.target.url.value) && normalizeSearchUrl(ev.target.url.value);
+    if (searchUrl) {
+      setTab('searches');
+      $('#search-add').url.value = searchUrl;
+      $('#search-add').label.value = searchNameFromUrl(searchUrl);
+      $('#search-add').label.focus();
+      ev.target.reset();
+      toast('To link do wyszukiwania — sprawdź nazwę i kliknij „Śledź wyszukiwanie”.');
+    } else {
+      const r = await addUrls([ev.target.url.value]);
+      if (r.failed.length) throw new Error(r.failed[0].error);
+      toast(r.skipped.length ? 'To ogłoszenie już jest obserwowane.' : `Dodano: ${r.added[0]?.title}`);
+      ev.target.reset();
+      await refresh();
+    }
   } catch (e) { toast(e.message, true); }
   btn.disabled = false; btn.textContent = 'Obserwuj';
+});
+
+// ---------- wyszukiwania ----------
+// Link do wyników wyszukiwania Otomoto bez numeru strony (jak normalizeSearchUrl w funkcjach serwera) albo null.
+function normalizeSearchUrl(input) {
+  let u;
+  try { u = new URL(String(input ?? '').trim().replace(/^(www\.)?otomoto\.pl/, 'https://www.otomoto.pl')); } catch { return null; }
+  if (!/^(www\.)?otomoto\.pl$/.test(u.hostname) || u.pathname.includes('/oferta/') || u.pathname === '/') return null;
+  u.protocol = 'https:'; u.hostname = 'www.otomoto.pl'; u.hash = '';
+  u.searchParams.delete('page');
+  return u.toString();
+}
+// Domyślna nazwa z adresu: /osobowe/kia/ev3 → „Kia EV3”
+function searchNameFromUrl(url) {
+  const parts = new URL(url).pathname.split('/').filter((p) => p && !['osobowe', 'uzywane', 'nowe', 'q'].includes(p) && !p.startsWith('seg-'));
+  const name = parts.slice(0, 3).map((p) => p.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\b(Ev\d|Id\.?\d|Bmw|Mg|Byd|Gac)\b/gi, (m) => m.toUpperCase())).join(' ');
+  return name || 'Wyszukiwanie';
+}
+let seenSnapshot = {};
+const unseen = (sr, since = sr.seen_until) => (sr.search_hits ?? []).filter((h) => h.first_seen > since).length;
+function renderNewBadge() {
+  const n = state.searches.reduce((a, sr) => a + unseen(sr), 0);
+  $('#new-badge').hidden = !n;
+  $('#new-badge').textContent = n;
+}
+async function markSearchesSeen() {
+  seenSnapshot = Object.fromEntries(state.searches.map((sr) => [sr.id, sr.seen_until]));
+  const ids = state.searches.filter((sr) => unseen(sr)).map((sr) => sr.id);
+  if (!ids.length) return;
+  const now = new Date().toISOString();
+  state.searches.forEach((sr) => { if (ids.includes(sr.id)) sr.seen_until = now; });
+  renderNewBadge();
+  await sb.from('searches').update({ seen_until: now }).in('id', ids);
+}
+function hitCard(h, sr, watched) {
+  const p = h.params ?? {};
+  const meta = [p.year, p.mileage != null ? `${fmt(p.mileage)} km` : null, p.power ? `${p.power} KM` : null, p.fuel].filter(Boolean);
+  const isNew = h.first_seen > (seenSnapshot[sr.id] ?? sr.seen_until);
+  return `<article class="hit ${isNew ? 'new' : ''}">
+    ${isNew ? '<span class="new-tag">NOWE</span>' : ''}
+    ${h.image ? `<a class="thumb" href="${esc(h.url)}" target="_blank" rel="noopener"><img src="${esc(h.image)}" alt="" loading="lazy"></a>` : PLACEHOLDER}
+    <div style="min-width:0;flex:1">
+      <a class="hit-title" href="${esc(h.url)}" target="_blank" rel="noopener">${esc(h.title || h.url)}</a>
+      <div class="meta">${meta.map((x) => `<span>${esc(x)}</span>`).join('')}</div>
+      ${h.location ? `<div class="loc">${icon('pin')}${esc(h.location)}</div>` : ''}
+      <div class="hit-foot">
+        <span><b class="price num">${money(h.price, h.currency)}</b> <span class="note" style="display:inline;margin:0">${ago(h.first_seen)}</span></span>
+        ${watched.has(h.ad_key) ? '<span class="pill neutral">Obserwujesz</span>' : `<button class="btn btn-sm" data-watch="${esc(h.url)}">${icon('heart')}Obserwuj</button>`}
+      </div>
+    </div>
+  </article>`;
+}
+function renderSearches() {
+  const root = $('#srch-list');
+  if (!state.searches.length) {
+    root.innerHTML = `<div class="empty" style="margin-top:18px"><div class="empty-ico">${icon('search')}</div>
+      <h2>Śledź nowe ogłoszenia</h2>
+      <p>Wklej powyżej link do wyników wyszukiwania z otomoto.pl, np. Kia EV3 do 150 000 zł. Zapamiętamy obecne wyniki i powiadomimy Cię o każdym nowym ogłoszeniu.</p></div>`;
+    return;
+  }
+  const watched = new Set(state.listings.map((e) => e.key));
+  root.innerHTML = state.searches.map((sr) => {
+    const hits = sr.search_hits ?? [];
+    const info = [sr.total_count != null ? `${fmt(sr.total_count)} ${plural(sr.total_count, 'wynik', 'wyniki', 'wyników')}` : null,
+      sr.last_checked ? `sprawdzono ${ago(sr.last_checked)}` : 'czeka na pierwsze sprawdzenie',
+      `<a href="${esc(sr.url)}" target="_blank" rel="noopener">otwórz na Otomoto</a>`].filter(Boolean);
+    return `<section class="srch" data-search="${esc(sr.id)}">
+      <div class="srch-head">
+        <div style="min-width:0"><h2>${esc(sr.name)}</h2>
+          <div class="meta">${info.map((x) => `<span>${x}</span>`).join('')}${sr.last_error ? ` <span class="warn-ico" title="${esc(sr.last_error)}">${icon('alert')}</span>` : ''}</div></div>
+        <div class="srch-actions">
+          <button class="btn btn-sm" data-scheck="${esc(sr.id)}">${icon('refresh')}Sprawdź</button>
+          <button class="icon-btn" data-sdel="${esc(sr.id)}" title="Usuń wyszukiwanie">${icon('trash')}</button>
+        </div>
+      </div>
+      ${hits.length ? `<div class="hits">${hits.map((h) => hitCard(h, sr, watched)).join('')}</div>`
+        : `<div class="srch-empty">Brak nowych ogłoszeń od ${dateL(sr.created_at)}. ${sr.total_count ? 'Obecne wyniki zostały zapamiętane — pokażemy tu każde nowe ogłoszenie.' : ''}</div>`}
+    </section>`;
+  }).join('');
+}
+async function checkSearch(id) {
+  const r = await callFn('searches', { id });
+  await refresh();
+  return r;
+}
+$('#search-add').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const f = ev.target, url = normalizeSearchUrl(f.url.value);
+  if (!url) return toast('To nie jest link do wyników wyszukiwania Otomoto (np. https://www.otomoto.pl/osobowe/kia/ev3?…).', true);
+  if (state.searches.some((sr) => sr.url === url)) return toast('To wyszukiwanie już jest śledzone.', true);
+  if (state.searches.length >= 10) return toast('Możesz śledzić najwyżej 10 wyszukiwań.', true);
+  const btn = $('#search-add-btn');
+  btn.disabled = true; btn.innerHTML = `${icon('refresh', 'spin')}Sprawdzam…`;
+  try {
+    const { data, error } = await sb.from('searches').insert({ url, name: f.label.value.trim() || searchNameFromUrl(url) }).select().single();
+    if (error) throw new Error(error.message);
+    f.reset();
+    const r = await checkSearch(data.id).catch((e) => { refresh(); throw e; });
+    toast(`Zapamiętano ${fmt(r.total)} ${plural(r.total, 'obecny wynik', 'obecne wyniki', 'obecnych wyników')} — powiadomimy Cię o nowych ogłoszeniach.`);
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false; btn.textContent = 'Śledź wyszukiwanie';
+});
+$('#srch-list').addEventListener('click', async (ev) => {
+  const w = ev.target.closest('[data-watch]');
+  if (w) {
+    w.disabled = true; w.innerHTML = `${icon('refresh', 'spin')}Dodaję…`;
+    try {
+      const r = await addUrls([w.dataset.watch]);
+      if (r.failed.length) throw new Error(r.failed[0].error);
+      toast(r.skipped.length ? 'To ogłoszenie już jest obserwowane.' : `Obserwujesz: ${r.added[0]?.title}`);
+      await refresh();
+    } catch (e) { toast(e.message, true); w.disabled = false; w.innerHTML = `${icon('heart')}Obserwuj`; }
+    return;
+  }
+  const c = ev.target.closest('[data-scheck]');
+  if (c) {
+    c.disabled = true; c.innerHTML = `${icon('refresh', 'spin')}Sprawdzam…`;
+    try {
+      const r = await checkSearch(c.dataset.scheck);
+      toast(r.skipped ? 'Wyszukiwanie było sprawdzane przed chwilą.' : r.fresh ? `Nowe ogłoszenia: ${r.fresh}` : 'Brak nowych ogłoszeń.');
+    } catch (e) { toast(e.message, true); renderSearches(); }
+    return;
+  }
+  const d = ev.target.closest('[data-sdel]');
+  if (d) {
+    // dwuetapowe usuwanie: pierwsze kliknięcie uzbraja przycisk na 3 s
+    if (!d.classList.contains('armed')) {
+      d.classList.add('armed'); d.textContent = 'Usunąć?';
+      setTimeout(() => { if (d.isConnected) { d.classList.remove('armed'); d.innerHTML = icon('trash'); } }, 3000);
+      return;
+    }
+    const { error } = await sb.from('searches').delete().eq('id', d.dataset.sdel);
+    if (error) return toast(error.message, true);
+    toast('Usunięto wyszukiwanie.');
+    await refresh();
+  }
 });
 
 async function callFn(name, body) {
@@ -1600,7 +1785,7 @@ function showApp(s) {
   $('#app').hidden = !on;
   $('#add').hidden = !on;
   $('#user').hidden = !on;
-  if (!on) { state = { listings: [] }; setAuthMode('login'); return; }
+  if (!on) { state = { listings: [], searches: [] }; setAuthMode('login'); return; }
   const email = s.user.email ?? '';
   $('#user-email').textContent = email;
   $('#user-who').textContent = `Zalogowano jako ${email}`;
@@ -1617,7 +1802,7 @@ sb.auth.onAuthStateChange((ev, s) => {
   showApp(s);
 });
 
-let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => (view.tab === 'compare' ? renderCompare() : renderGrid()), 150); });
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => (view.tab === 'compare' ? renderCompare() : view.tab === 'searches' ? renderSearches() : renderGrid()), 150); });
 setInterval(() => { if (!state.checking && !state.importing) refresh(); }, 5 * 60_000);
 captureImportHash();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

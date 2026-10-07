@@ -87,3 +87,68 @@ export async function fetchListing(url: string): Promise<Listing> {
     specs,
   };
 }
+
+// ---------- wyniki wyszukiwania ----------
+
+/** Link do wyników wyszukiwania Otomoto (nie do pojedynczego ogłoszenia) bez numeru strony, albo null. */
+export function normalizeSearchUrl(input: unknown): string | null {
+  let u: URL;
+  try { u = new URL(String(input ?? '').trim()); } catch { return null; }
+  if (!/^(www\.)?otomoto\.pl$/.test(u.hostname) || u.pathname.includes('/oferta/') || u.pathname === '/') return null;
+  u.protocol = 'https:'; u.hostname = 'www.otomoto.pl'; u.hash = '';
+  u.searchParams.delete('page');
+  return u.toString();
+}
+
+export type SearchHit = {
+  key: string; url: string; title: string | null; subtitle: string | null; image: string | null;
+  price: number | null; currency: string; location: string | null; params: Record<string, unknown>; createdAt: string | null;
+};
+export type SearchPage = { ok: true; total: number; hits: SearchHit[] } | { ok: false; error: string };
+
+/** Jedna strona wyników (32 ogłoszenia), najnowsze najpierw. */
+export async function fetchSearchPage(searchUrl: string, page = 1): Promise<SearchPage> {
+  const u = new URL(searchUrl);
+  u.searchParams.set('search[order]', 'created_at_first:desc');
+  if (page > 1) u.searchParams.set('page', String(page));
+  let res: Response;
+  try {
+    res = await fetch(u, { headers: HEADERS, redirect: 'follow', signal: AbortSignal.timeout(25_000) });
+  } catch (e) {
+    return { ok: false, error: `Błąd sieci: ${(e as Error).message}` };
+  }
+  if (!res.ok) { await res.body?.cancel(); return { ok: false, error: `HTTP ${res.status}` }; }
+  const html = await res.text();
+  const start = html.indexOf('<script id="__NEXT_DATA__"');
+  if (start < 0) return { ok: false, error: 'Brak __NEXT_DATA__ na stronie (zmiana struktury lub blokada)' };
+  const open = html.indexOf('>', start) + 1;
+  let search: Any;
+  try {
+    const state = JSON.parse(html.slice(open, html.indexOf('</script>', open)))?.props?.pageProps?.urqlState ?? {};
+    for (const v of Object.values(state) as Any[]) {
+      const d = JSON.parse(v?.data ?? '{}');
+      if (d.advertSearch) { search = d.advertSearch; break; }
+    }
+  } catch {
+    return { ok: false, error: 'Nie udało się odczytać wyników wyszukiwania' };
+  }
+  if (!search) return { ok: false, error: 'To nie wygląda na stronę wyników wyszukiwania Otomoto' };
+
+  const hits: SearchHit[] = [];
+  for (const { node: n } of (search.edges ?? []) as Any[]) {
+    const m = String(n?.url ?? '').match(/-ID([A-Za-z0-9]+)\.html/);
+    if (!m) continue;
+    const p = Object.fromEntries((n.parameters ?? []).map((x: Any) => [x.key, x]));
+    const num = (k: string) => { const v = Number(p[k]?.value); return Number.isFinite(v) ? v : null; };
+    const price = Number(n.price?.amount?.units);
+    hits.push({
+      key: m[1], url: n.url, title: n.title ?? null, subtitle: n.shortDescription ?? null,
+      image: n.thumbnail?.x2 ?? n.thumbnail?.x1 ?? null,
+      price: Number.isFinite(price) ? price : null, currency: n.price?.amount?.currencyCode ?? 'PLN',
+      location: [n.location?.city?.name, n.location?.region?.name].filter(Boolean).join(', ') || null,
+      params: { year: num('year'), mileage: num('mileage'), power: num('engine_power'), fuel: p.fuel_type?.displayValue ?? null },
+      createdAt: n.createdAt ?? null,
+    });
+  }
+  return { ok: true, total: Number(search.totalCount) || hits.length, hits };
+}
