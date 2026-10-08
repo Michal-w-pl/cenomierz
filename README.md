@@ -21,6 +21,7 @@ ogłoszeń i wyszukiwań. Ceny są sprawdzane automatycznie raz dziennie, a zmia
 | `searches` | funkcja + pg_cron co 10 min | sprawdza zapisane wyszukiwania starsze niż 4 h, zapisuje nowe ogłoszenia |
 | `market` | funkcja + pg_cron co godzinę | co 3 dni pobiera próbkę podobnych ofert do porównania z rynkiem |
 | `alerts` | funkcja + pg_cron 6:00 UTC | zbiorczy mail (Brevo) z obniżkami cen i nowymi ogłoszeniami |
+| `health` | funkcja + pg_cron co godzinę | kontrola działania (`health_check()`): mail i push do `HEALTH_EMAIL` przy problemie, raz na dobę gdy trwa, i po naprawie |
 
 Dane z Otomoto są czytane z `__NEXT_DATA__` na stronach ogłoszeń i wyników wyszukiwania (`supabase/functions/_shared/otomoto.ts`).
 
@@ -34,7 +35,7 @@ git push                                      # strona (GitHub Pages z main:/doc
 ```
 
 Sekrety (w `.env.local`, poza repozytorium): `SUPABASE_DB_PASSWORD`, `BREVO_SMTP_LOGIN`, `BREVO_SMTP_KEY`,
-`BREVO_API_KEY`, `ALERT_FROM`. Funkcje korzystają z sekretów Supabase `BREVO_API_KEY` i `ALERT_FROM`.
+`BREVO_API_KEY`, `ALERT_FROM`. Funkcje korzystają z sekretów Supabase `BREVO_API_KEY`, `ALERT_FROM` i `HEALTH_EMAIL` (adres administratora).
 
 Pierwotna wersja lokalna (Node.js, `data/listings.json`) została wycofana — jest w historii gita przed commitem
 „Wycofanie wersji lokalnej”.
