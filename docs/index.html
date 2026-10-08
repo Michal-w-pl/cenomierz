@@ -435,7 +435,8 @@
     .hero-text .eyebrow { display: none; }
     .hero h1 { font-size: 18px; margin: 0; }
     .hero-text .sub { grid-column: 1; font-size: 12.5px; margin: 0; }
-    .hero #check { grid-column: 2; grid-row: 1 / span 2; }
+    .hero #check { grid-column: 2; grid-row: 1 / span 2; width: 40px; padding: 0; justify-content: center; }
+    .hero #check span { display: none; }
     .kpis { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 8px; margin: 0 -16px 18px; padding: 0 16px 4px; scrollbar-width: none; }
     .kpis::-webkit-scrollbar { display: none; }
     .kpi { flex: 0 0 auto; min-width: 140px; max-width: 200px; padding: 10px 12px; scroll-snap-align: start; }
@@ -540,7 +541,7 @@
       <span class="eyebrow"><svg class="i" style="width:13px;height:13px"><use href="#i-chart"/></svg>Monitoring cen</span>
       <h1>Obserwowane ogłoszenia</h1>
       <p class="sub" id="sub">Ładowanie…</p>
-      <button class="btn" id="check"><svg class="i"><use href="#i-refresh"/></svg><span>Sprawdź ceny</span></button>
+      <button class="btn" id="check" title="Sprawdź ceny teraz"><svg class="i"><use href="#i-refresh"/></svg><span>Sprawdź ceny</span></button>
     </div>
     <svg class="hero-art art" viewBox="0 0 360 170" aria-hidden="true">
       <!-- karta z wykresem -->
