@@ -6,6 +6,7 @@
 import { admin, CORS, json, sleep, userFrom } from '../_shared/db.ts';
 import { fetchSearchPage, type SearchHit } from '../_shared/otomoto.ts';
 import { money, pushToUser } from '../_shared/push.ts';
+import { dealFor, dealLabel, type DealHit } from '../_shared/deal.ts';
 
 const DUE_AFTER_MS = 4 * 3600_000;
 const MANUAL_MIN_GAP_MS = 60_000;
@@ -81,18 +82,27 @@ async function check(db: ReturnType<typeof admin>, s: Record<string, any>) {
   const rows = [...found.values()].map((h) => ({
     search_id: s.id, ad_key: h.key, url: h.url, title: h.title, subtitle: h.subtitle, image: h.image,
     price: h.price, currency: h.currency, location: h.location, params: h.params, ad_created_at: h.createdAt,
-    first_seen: now, baseline,
+    first_seen: now, baseline, deal_pct: null as number | null, deal_n: null as number | null,
   }));
   if (rows.length) {
+    // ocena ceny względem podobnych ofert z tego wyszukiwania (zapamiętanych wcześniej i z tej porcji)
+    const { data: prev } = await db.from('search_hits').select('ad_key, title, price, currency, params').eq('search_id', s.id).limit(2000);
+    const pool = [...((prev ?? []) as DealHit[]), ...rows] as DealHit[];
+    for (const r of rows) {
+      const d = dealFor(r as DealHit, pool);
+      if (d) { r.deal_pct = d.pct; r.deal_n = d.n; }
+    }
     const { error } = await db.from('search_hits').upsert(rows, { onConflict: 'search_id,ad_key', ignoreDuplicates: true });
     if (error) return { ok: false as const, error: error.message };
   }
   await db.from('searches').update({ last_checked: now, last_error: null, total_count: total }).eq('id', s.id);
   if (!baseline && rows.length) {
-    const h = rows[0], more = rows.length - 1;
+    // na czoło powiadomienia — ogłoszenie najtańsze względem rynku (gdy jest wyraźnie tańsze), inaczej najnowsze
+    const best = rows.filter((r) => r.deal_pct != null && r.deal_pct <= -3).sort((a, b) => a.deal_pct! - b.deal_pct!)[0];
+    const h = best ?? rows[0], more = rows.length - 1, deal = dealLabel(h.deal_pct);
     await pushToUser(db, s.user_id, {
-      title: `Nowe ogłoszenie: ${s.name}`,
-      body: `${h.title ?? 'Ogłoszenie'} — ${money(h.price, h.currency ?? 'PLN')}${more ? ` (i ${more} ${more === 1 ? 'kolejne' : 'kolejnych'})` : ''}`,
+      title: `${best ? 'Okazja' : 'Nowe ogłoszenie'}: ${s.name}`,
+      body: `${h.title ?? 'Ogłoszenie'} — ${money(h.price, h.currency ?? 'PLN')}${deal ? ` (${deal})` : ''}${more ? `, i ${more} ${more === 1 ? 'kolejne' : 'kolejnych'}` : ''}`,
       url: more ? 'https://michal-w-pl.github.io/cenomierz/#wyszukiwania' : h.url, tag: `search-${String(s.id).slice(0, 8)}`,
     });
   }

@@ -951,7 +951,7 @@ async function refresh() {
   const [w, m, sr] = await Promise.all([
     sb.from('watches').select('ad_key, added_at, wltp_manual, target_price, ads(*, price_points(t, price))').order('added_at'),
     sb.from('app_meta').select('value').eq('key', 'vca').maybeSingle(),
-    sb.from('searches').select('*, search_hits(ad_key, url, title, subtitle, image, price, currency, location, params, first_seen)')
+    sb.from('searches').select('*, search_hits(ad_key, url, title, subtitle, image, price, currency, location, params, first_seen, deal_pct, deal_n)')
       .eq('search_hits.baseline', false).order('created_at')
       .order('first_seen', { referencedTable: 'search_hits', ascending: false }).limit(60, { referencedTable: 'search_hits' }),
   ]);
@@ -1978,6 +1978,7 @@ function hitCard(h, sr, watched) {
       <a class="hit-title" href="${esc(h.url)}" target="_blank" rel="noopener">${esc(h.title || h.url)}</a>
       <div class="meta">${meta.map((x) => `<span>${esc(x)}</span>`).join('')}</div>
       ${h.location ? `<div class="loc">${icon('pin')}${esc(h.location)}</div>` : ''}
+      ${h.deal_pct != null ? `<div class="mkt-row"><span class="pill ${mktTone(h.deal_pct)}" title="Względem ${h.deal_n} podobnych ofert z tego wyszukiwania (ten sam model, rocznik ±1, zbliżona moc, z uwzględnieniem przebiegu)">${mktLabel(h.deal_pct)}</span></div>` : ''}
       <div class="hit-foot">
         <span><b class="price num">${money(h.price, h.currency)}</b> <span class="note" style="display:inline;margin:0">${ago(h.first_seen)}</span></span>
         ${watched.has(h.ad_key) ? '<span class="pill neutral">Obserwujesz</span>' : `<button class="btn btn-sm" data-watch="${esc(h.url)}">${icon('heart')}Obserwuj</button>`}
