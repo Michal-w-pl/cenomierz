@@ -1463,7 +1463,7 @@ function computeMarket(e) {
     cheaperThan: pool.filter((h) => h.p > price).length / pool.length, min: prices[0], max: prices.at(-1) };
 }
 const mktTone = (pct) => (pct <= -3 ? 'good' : pct >= 3 ? 'bad' : 'neutral');
-const mktLabel = (pct) => (Math.abs(pct) < 3 ? 'cena rynkowa' : `${pctS(pct)} ${pct < 0 ? 'poniżej' : 'powyżej'} rynku`);
+const mktLabel = (pct) => (Math.abs(pct) < 3 ? 'cena rynkowa' : `${Math.abs(pct).toLocaleString('pl-PL', { maximumFractionDigits: 1 })}% ${pct < 0 ? 'poniżej' : 'powyżej'} rynku`);
 function targetChip(e) {
   if (e.targetPrice == null) return '';
   const hit = stats(e).last != null && stats(e).last <= e.targetPrice;
