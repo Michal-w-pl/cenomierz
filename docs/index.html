@@ -362,7 +362,7 @@
   .share-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin: 18px 0 0; font-size: 13.5px; }
   .share-banner a { font-weight: 600; color: var(--accent); }
   body.shared #add, body.shared #user, body.shared #check, body.shared .selbar, body.shared .card-actions,
-  body.shared [data-tab="searches"], body.shared [data-del], body.shared [data-sel], body.shared [data-wltp-slot],
+  body.shared [data-tab="searches"], body.shared [data-del], body.shared [data-similar], body.shared [data-sel], body.shared [data-wltp-slot],
   body.shared .dlg-section:has([data-target-form]), body.shared [data-cost-settings], body.shared .panel { display: none !important; }
   body.shared .card.selected { border-color: var(--border); box-shadow: var(--shadow); }
 
@@ -1583,6 +1583,7 @@ function openDetail(key) {
         ${e.location ? `<div class="loc">${icon('pin')}${esc(e.location)}</div>` : ''}
         <div class="dlg-actions">
           <a class="btn btn-primary btn-sm" href="${esc(e.url)}" target="_blank" rel="noopener">${icon('ext')}Otwórz w Otomoto</a>
+          ${similarBtn(e)}
           ${s.removed ? '<span class="pill warn">Ogłoszenie usunięte</span>' : deltaPill(s, e.currency)}
         </div>
       </div>
@@ -1613,6 +1614,15 @@ function openDetail(key) {
 $('#dlg').addEventListener('click', async (ev) => {
   const dlg = $('#dlg');
   if (ev.target === dlg || ev.target.closest('[data-close]')) return dlg.close();
+  const sim = ev.target.closest('[data-similar]');
+  if (sim) {
+    const e = state.listings.find((x) => x.key === sim.dataset.similar);
+    if (sim.dataset.tracked) { dlg.close(); return setTab('searches'); }
+    sim.disabled = true; sim.innerHTML = `${icon('refresh', 'spin')}Sprawdzam…`;
+    await addSearch(normalizeSearchUrl(e.marketUrl), similarName(e));
+    if (dlg.open && sim.isConnected) sim.outerHTML = similarBtn(e);
+    return;
+  }
   const del = ev.target.closest('[data-del]');
   if (!del) return;
   dlg.close();
@@ -2012,19 +2022,32 @@ $('#search-add').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const f = ev.target, url = normalizeSearchUrl(f.url.value);
   if (!url) return toast('To nie jest link do wyników wyszukiwania Otomoto (np. https://www.otomoto.pl/osobowe/kia/ev3?…).', true);
-  if (state.searches.some((sr) => sr.url === url)) return toast('To wyszukiwanie już jest śledzone.', true);
-  if (state.searches.length >= 10) return toast('Możesz śledzić najwyżej 10 wyszukiwań.', true);
   const btn = $('#search-add-btn');
   btn.disabled = true; btn.innerHTML = `${icon('refresh', 'spin')}Sprawdzam…`;
-  try {
-    const { data, error } = await sb.from('searches').insert({ url, name: f.label.value.trim() || searchNameFromUrl(url) }).select().single();
-    if (error) throw new Error(error.message);
-    f.reset();
-    const r = await checkSearch(data.id).catch((e) => { refresh(); throw e; });
-    toast(`Zapamiętano ${fmt(r.total)} ${plural(r.total, 'obecny wynik', 'obecne wyniki', 'obecnych wyników')} — powiadomimy Cię o nowych ogłoszeniach.`);
-  } catch (e) { toast(e.message, true); }
+  if (await addSearch(url, f.label.value.trim() || searchNameFromUrl(url))) f.reset();
   btn.disabled = false; btn.textContent = 'Śledź wyszukiwanie';
 });
+/** Zapisuje wyszukiwanie i od razu je sprawdza (pierwsze sprawdzenie = stan wyjściowy). Zwraca true, gdy się udało. */
+async function addSearch(url, name) {
+  if (state.searches.some((sr) => sr.url === url)) { toast('To wyszukiwanie już jest śledzone.', true); return false; }
+  if (state.searches.length >= 10) { toast('Możesz śledzić najwyżej 10 wyszukiwań.', true); return false; }
+  try {
+    const { data, error } = await sb.from('searches').insert({ url, name }).select().single();
+    if (error) throw new Error(error.message);
+    const r = await checkSearch(data.id).catch((e) => { refresh(); throw e; });
+    toast(`${name}: zapamiętano ${fmt(r.total)} ${plural(r.total, 'obecny wynik', 'obecne wyniki', 'obecnych wyników')} — powiadomimy Cię o nowych ogłoszeniach.`);
+    return true;
+  } catch (e) { toast(e.message, true); return false; }
+}
+// „Śledź podobne” w szczegółach ogłoszenia: wyszukiwanie z adresu próbki rynku (marka, model, rocznik ±1, paliwo).
+const similarName = (e) => [e.specs?.make, e.specs?.model].filter(Boolean).join(' ') + (e.specs?.year ? ` ${e.specs.year - 1}–${e.specs.year + 1}` : '');
+function similarBtn(e) {
+  const url = e.marketUrl && normalizeSearchUrl(e.marketUrl);
+  if (!url || shareId) return '';
+  return state.searches.some((sr) => sr.url === url)
+    ? `<button class="btn btn-sm" data-similar="${esc(e.key)}" data-tracked="1" title="Przejdź do zakładki Wyszukiwania">${icon('check')}Śledzisz podobne</button>`
+    : `<button class="btn btn-sm" data-similar="${esc(e.key)}" title="Powiadomienia o nowych ogłoszeniach: ${esc(similarName(e))}${e.specs?.fuel ? ', ' + esc(e.specs.fuel.toLowerCase()) : ''}">${icon('search')}Śledź podobne</button>`;
+}
 $('#srch-list').addEventListener('click', async (ev) => {
   const w = ev.target.closest('[data-watch]');
   if (w) {
