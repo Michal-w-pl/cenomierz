@@ -1,11 +1,11 @@
 // Odświeżanie cen.
 //  • Wywołanie z harmonogramu (pg_cron co 10 min, bez logowania): porcja ogłoszeń sprawdzanych dawniej niż 20 h,
-//    a raz na 30 dni — pobranie oficjalnych danych WLTP z VCA. Wywołanie jest bezpieczne do powtarzania:
+//    a raz na 30 dni — pobranie oficjalnych danych WLTP z VCA; po 7:00 zbiorczy push z ciszy nocnej (push_queue). Wywołanie jest bezpieczne do powtarzania:
 //    gdy nie ma nic do zrobienia, kończy się od razu.
 //  • Wywołanie z panelu ({ mine: true } + token): ogłoszenia użytkownika sprawdzane dawniej niż 1 h, porcjami.
 import { admin, CORS, json, refreshAd, sleep, userFrom, vcaTable } from '../_shared/db.ts';
 import { downloadVca, matchOfficial } from '../_shared/wltp.ts';
-import { notifyAdChange } from '../_shared/push.ts';
+import { flushNightQueue, notifyAdChange } from '../_shared/push.ts';
 
 const BATCH = 25;
 const BUDGET_MS = 110_000;
@@ -35,7 +35,10 @@ Deno.serve(async (req) => {
     return json({ ...r, remaining: Math.max(0, due.length - r.processed) });
   }
 
-  // --- harmonogram: najpierw dane WLTP, jeśli przeterminowane
+  // --- harmonogram: po 7:00 zbiorczy push z powiadomień odłożonych w ciszy nocnej
+  await flushNightQueue(db).catch((e) => console.error('push queue', e));
+
+  // dane WLTP, jeśli przeterminowane
   const { data: meta } = await db.from('app_meta').select('value').eq('key', 'vca').maybeSingle();
   if (!meta || Date.now() - Date.parse(meta.value.fetchedAt) > VCA_MAX_AGE_MS) {
     try {

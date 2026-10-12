@@ -15,18 +15,24 @@ function appServer() {
   return server;
 }
 
-/** Cisza nocna 22:00–7:00 czasu polskiego — wtedy zmiany trafią tylko do porannego maila. */
+/** Cisza nocna 22:00–7:00 czasu polskiego — wtedy powiadomienia czekają w push_queue na zbiorczy push po 7:00. */
 export function quietHours(now = new Date()) {
   const h = Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Warsaw' }).format(now));
   return h >= 22 || h < 7;
 }
 
-/** Wysyła powiadomienie na wszystkie urządzenia użytkownika; usuwa wygasłe subskrypcje. Zwraca liczbę wysłanych. */
+/**
+ * Wysyła powiadomienie na wszystkie urządzenia użytkownika; usuwa wygasłe subskrypcje. Zwraca liczbę wysłanych.
+ * W ciszy nocnej (bez ignoreQuiet) odkłada je do push_queue — wyśle je flushNightQueue po 7:00.
+ */
 export async function pushToUser(db: SupabaseClient, userId: string, payload: PushPayload, { ignoreQuiet = false } = {}) {
-  if (!ignoreQuiet && quietHours()) return 0;
   if (!Deno.env.get('VAPID_KEYS_B64')) return 0;
   const { data: subs } = await db.from('push_subscriptions').select('endpoint, p256dh, auth').eq('user_id', userId);
   if (!subs?.length) return 0;
+  if (!ignoreQuiet && quietHours()) {
+    await db.from('push_queue').insert({ user_id: userId, payload });
+    return 0;
+  }
   const as = await appServer();
   let sent = 0;
   for (const s of subs) {
@@ -44,7 +50,35 @@ export async function pushToUser(db: SupabaseClient, userId: string, payload: Pu
   return sent;
 }
 
-export const money = (n: number | null | undefined, cur = 'PLN') =>
+/**
+ * Po ciszy nocnej: wysyła każdemu użytkownikowi jedno zbiorcze powiadomienie z kolejki i ją czyści.
+ * Z tego samego tagu (np. dwie obniżki jednego ogłoszenia) liczy się tylko ostatnie. Zwraca liczbę użytkowników.
+ */
+export async function flushNightQueue(db: SupabaseClient) {
+  if (quietHours()) return 0;
+  const { data: rows } = await db.from('push_queue').select('id, user_id, payload').order('id').limit(1000);
+  if (!rows?.length) return 0;
+  const byUser = new Map<string, Map<string, PushPayload>>();
+  for (const r of rows) {
+    const p = r.payload as PushPayload;
+    if (!byUser.has(r.user_id)) byUser.set(r.user_id, new Map());
+    const m = byUser.get(r.user_id)!;
+    const k = p.tag ?? `#${r.id}`;
+    m.delete(k);           // ostatnia wersja trafia na koniec listy
+    m.set(k, p);
+  }
+  await db.from('push_queue').delete().lte('id', rows.at(-1)!.id);
+  for (const [userId, m] of byUser) {
+    const items = [...m.values()];
+    if (items.length === 1) { await pushToUser(db, userId, items[0]); continue; }
+    const shown = items.slice(0, 4).map((p) => `• ${p.title}: ${p.body}`);
+    if (items.length > 4) shown.push(`…i ${items.length - 4} więcej`);
+    await pushToUser(db, userId, { title: `Cenomierz: ${items.length} ${items.length < 5 ? 'zmiany' : 'zmian'} w nocy`, body: shown.join('\n'), url: SITE, tag: 'night' });
+  }
+  return byUser.size;
+}
+
+export const money =(n: number | null | undefined, cur = 'PLN') =>
   n == null ? '—' : `${Math.round(n).toLocaleString('pl-PL').replace(/\s/g, ' ')} ${cur === 'PLN' ? 'zł' : cur}`;
 
 const SITE = 'https://michal-w-pl.github.io/cenomierz/';
@@ -58,7 +92,7 @@ export async function notifyAdChange(
   // deno-lint-ignore no-explicit-any
   r: Record<string, any>,
 ) {
-  if (!r.ok || quietHours()) return;
+  if (!r.ok) return;
   const drop = r.changed && r.oldPrice != null && r.newPrice != null && r.newPrice < r.oldPrice;
   if (!drop && !r.newlyRemoved && !r.reactivated) return;
   const { data: watchers } = await db.from('watches').select('user_id, target_price').eq('ad_key', key);

@@ -17,7 +17,7 @@ ogłoszeń i wyszukiwań. Ceny są sprawdzane automatycznie raz dziennie, a zmia
 | Strona | `docs/index.html` → GitHub Pages | panel, porównywarka, wyszukiwania, logowanie |
 | Baza i konta | Supabase (`supabase/migrations`) | ogłoszenia i historia cen (wspólne), obserwacje i wyszukiwania (per użytkownik, chronione RLS) |
 | `add-listings` | funkcja Supabase | dodaje ogłoszenia zalogowanego użytkownika, pobiera dane z Otomoto |
-| `refresh` | funkcja + pg_cron co 10 min | odświeża ogłoszenia sprawdzane > 20 h temu; raz na 30 dni pobiera oficjalne WLTP (VCA) |
+| `refresh` | funkcja + pg_cron co 10 min | odświeża ogłoszenia sprawdzane > 20 h temu; raz na 30 dni pobiera oficjalne WLTP (VCA); po 7:00 wysyła zbiorczy push z powiadomień odłożonych w ciszy nocnej 22–7 (`push_queue`) |
 | `searches` | funkcja + pg_cron co 10 min | sprawdza zapisane wyszukiwania starsze niż 4 h, zapisuje nowe ogłoszenia |
 | `market` | funkcja + pg_cron co godzinę | co 3 dni pobiera próbkę podobnych ofert do porównania z rynkiem |
 | `alerts` | funkcja + pg_cron 6:00 UTC | zbiorczy mail (Brevo) z obniżkami cen i nowymi ogłoszeniami |
