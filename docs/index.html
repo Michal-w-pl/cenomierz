@@ -1446,7 +1446,7 @@ async function loadMarket() {
   }
   state.listings.forEach((e) => { e.market = computeMarket(e); });
 }
-const mkt = (e) => (e.market && !e.market.tooFew ? e.market : null);
+const mkt = (e) => (e.market && !e.market.tooFew && !e.market.implausible ? e.market : null);
 const median = (sorted) => sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
 // Podobne oferty z próbki (bieżącej albo historycznej) — te same zasady dla porównania i trendu.
 function pickComparables(e, hits) {
@@ -1483,6 +1483,8 @@ function computeMarket(e) {
     if (b < 0 && m >= lo && m <= hi && a0 + b * m > 0) { expected = a0 + b * m; fit = { a: a0, b, lo, hi }; }
   }
   const ref = expected ?? med;
+  // cena poniżej połowy rynku to prawie zawsze pomyłka sprzedawcy albo rata — bez oceny „okazja”
+  if (price < ref / 2) return { ...base, implausible: true, ref };
   return { ...base, median: med, expected, fit, ref, pct: (price - ref) / ref * 100,
     cheaperThan: pool.filter((h) => h.p > price).length / pool.length, min: prices[0], max: prices.at(-1) };
 }
@@ -1507,6 +1509,7 @@ function mktSection(e) {
   const foot = `<div class="note" style="margin-top:8px">Porównanie z ${r.n} ${plural(r.n, 'ofertą', 'ofertami', 'ofertami')} z Otomoto: ${esc(crit)}. Próbka pobrana ${ago(r.fetchedAt)}.
     <a href="${esc(e.marketUrl)}" target="_blank" rel="noopener" style="color:var(--accent)">Wszystkie oferty (${fmt(r.total)})</a></div>`;
   if (r.tooFew) return `<div class="dlg-section"><h3>Na tle rynku</h3><p class="sub">Za mało podobnych ofert na Otomoto (${r.n}), żeby wiarygodnie porównać cenę.</p>${foot}<div id="mkt-trend"></div></div>`;
+  if (r.implausible) return `<div class="dlg-section"><h3>Na tle rynku</h3><p class="sub">Cena ${money(r.price, e.currency)} jest niższa niż połowa rynku (ok. ${money(r.ref, e.currency)}) — to zwykle pomyłka w ogłoszeniu albo cena raty, więc nie porównujemy jej.</p>${foot}<div id="mkt-trend"></div></div>`;
   const st = (l, v) => `<div class="stat"><div class="stat-label">${l}</div><div class="stat-value num">${v}</div></div>`;
   const rows = [...r.pool, { k: e.key, self: true, t: e.title, u: e.url, p: r.price, y: sp.year, m: sp.mileage, pw: sp.power }]
     .sort((a, b) => a.p - b.p).map((h) => `<tr class="${h.self ? 'self' : ''}"><td><a href="${esc(h.u)}" target="_blank" rel="noopener">${esc(h.self ? 'To ogłoszenie' : h.t)}</a></td>

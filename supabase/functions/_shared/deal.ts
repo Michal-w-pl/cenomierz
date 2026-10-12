@@ -1,6 +1,7 @@
 // Ocena ceny nowego ogłoszenia z wyszukiwania względem podobnych ofert z tego samego wyszukiwania.
 // Zasady jak w panelu (porównanie z rynkiem): moc ±15% (gdy za mało → ±30%), odrzucenie cen spoza ½–2× mediany,
 // co najmniej 5 ofert; przy ≥ 8 ofertach z przebiegiem — cena oczekiwana z regresji cena~przebieg.
+// Cena poniżej połowy oczekiwanej nie dostaje oceny (pomyłka w ogłoszeniu, rata — nie okazja).
 // Dodatkowo: ta sama marka i model (dwa pierwsze słowa tytułu) i rocznik ±1, bo wyszukiwanie może być szerokie.
 
 export type DealHit = {
@@ -10,6 +11,7 @@ export type DealHit = {
 export type Deal = { pct: number; n: number };
 
 const MIN_CMP = 5;
+const IMPLAUSIBLE = 0.5;   // cena < ½ ceny oczekiwanej → nie oceniamy
 const modelKey = (t: string | null) => (t ?? '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 2).join(' ');
 const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
@@ -42,6 +44,8 @@ export function dealFor(h: DealHit, all: DealHit[]): Deal | null {
     const b = sxx ? sxy / sxx : 0, a0 = my - b * mx;
     if (b < 0 && m >= Math.min(...xs) && m <= Math.max(...xs) && a0 + b * m > 0) ref = a0 + b * m;
   }
+  // cena poniżej połowy rynku to prawie zawsze pomyłka sprzedawcy albo rata/leasing, a nie okazja — bez oceny
+  if (price < ref * IMPLAUSIBLE) return null;
   return { pct: Math.round((price - ref) / ref * 1000) / 10, n: pool.length };
 }
 
