@@ -27,7 +27,9 @@ Deno.serve(async (req) => {
     const hourAgo = Date.now() - 3600_000;
     const due = (data ?? []).map((w) => w.ads as unknown as Record<string, any>)
       .filter((a) => a && (!a.last_checked || Date.parse(a.last_checked) < hourAgo))
-      .filter((a) => !(a.status === 'REMOVED' && a.removed_at && Date.now() - Date.parse(a.removed_at) > 7 * 864e5))
+      // dawno usunięte (mogą wrócić) — najwyżej raz na dobę, żeby nie spowalniać ręcznego sprawdzania
+      .filter((a) => !(a.status === 'REMOVED' && a.removed_at && Date.now() - Date.parse(a.removed_at) > 7 * 864e5
+        && a.last_checked && Date.now() - Date.parse(a.last_checked) < 864e5))
       .sort((a, b) => String(a.last_checked ?? '').localeCompare(String(b.last_checked ?? '')));
     const r = await run(db, due.slice(0, BATCH), started);
     return json({ ...r, remaining: Math.max(0, due.length - r.processed) });

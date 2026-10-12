@@ -60,11 +60,15 @@ export async function notifyAdChange(
 ) {
   if (!r.ok || quietHours()) return;
   const drop = r.changed && r.oldPrice != null && r.newPrice != null && r.newPrice < r.oldPrice;
-  if (!drop && !r.newlyRemoved) return;
+  if (!drop && !r.newlyRemoved && !r.reactivated) return;
   const { data: watchers } = await db.from('watches').select('user_id, target_price').eq('ad_key', key);
   for (const w of watchers ?? []) {
     if (r.newlyRemoved) {
       await pushToUser(db, w.user_id, { title: 'Ogłoszenie zniknęło z Otomoto', body: `${r.title ?? 'Obserwowane ogłoszenie'} — prawdopodobnie sprzedane.`, url: SITE, tag: `gone-${key}` });
+      continue;
+    }
+    if (r.reactivated) {
+      await pushToUser(db, w.user_id, { title: 'Ogłoszenie wróciło na Otomoto', body: `${r.title ?? 'Obserwowane ogłoszenie'} — znowu aktywne${r.newPrice != null ? `, ${money(r.newPrice, r.currency)}` : ''}.`, url, tag: `back-${key}` });
       continue;
     }
     if (w.target_price != null && r.newPrice > Number(w.target_price)) continue;

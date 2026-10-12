@@ -69,5 +69,5 @@ export async function refreshAd(db: SupabaseClient, key: string, url: string, ex
       oldPrice = last ? Number(last.price) : null;
     }
   }
-  return { ok: true as const, changed, title: row.title as string, oldPrice, newPrice: r.price, currency: r.currency, image: row.image as string | null };
+  return { ok: true as const, changed, reactivated: existing?.status === 'REMOVED', title: row.title as string, oldPrice, newPrice: r.price, currency: r.currency, image: row.image as string | null };
 }
